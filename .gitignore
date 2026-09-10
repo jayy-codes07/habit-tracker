@@ -1,0 +1,28 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+
+# Build output — Express serves web/dist in production
+web/dist/
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Runtime / test
+coverage/
+.nyc_output/
+*.pid
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Python bytecode (ui-ux-pro-max skill scripts)
+__pycache__/
+*.py[cod]

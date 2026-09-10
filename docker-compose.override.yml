@@ -1,0 +1,15 @@
+# Development overrides. Compose merges this into docker-compose.yml automatically,
+# so plain `docker compose up` is the development stack.
+#
+# To run the production-shaped stack instead, name the base file explicitly:
+#   docker compose -f docker-compose.yml up --build
+services:
+  api:
+    environment:
+      NODE_ENV: development
+    # Live reload against the mounted source. The anonymous volume keeps the
+    # image's node_modules from being shadowed by the host mount.
+    command: npm run dev
+    volumes:
+      - ./server:/app
+      - /app/node_modules

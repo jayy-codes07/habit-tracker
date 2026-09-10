@@ -1,0 +1,61 @@
+# Base stack, shaped like production: the image runs `node src/server.js` with no
+# bind mounts and no dev dependencies.
+#
+#   docker compose up -d                      development - docker-compose.override.yml
+#                                             is merged in automatically
+#   docker compose -f docker-compose.yml up   production-like, this file alone
+#
+# The db service is a DEVELOPMENT convenience. Production points DATABASE_URL at a
+# managed Postgres service and runs the api service alone.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-habit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-habit_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-habit_tracker}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - habit_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-habit} -d ${POSTGRES_DB:-habit_tracker}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: ./server
+      target: runtime
+    restart: unless-stopped
+    # Auth secrets come straight from .env rather than through ${...}
+    # interpolation. A missing file is fine - the API then fails at boot with a
+    # clear message naming the absent variable.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Literal, not ${NODE_ENV:-production}: Compose interpolates that from the
+      # root .env, which sets development, so the default would never apply.
+      # docker-compose.override.yml switches this to development.
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://${POSTGRES_USER:-habit}:${POSTGRES_PASSWORD:-habit_dev_password}@db:5432/${POSTGRES_DB:-habit_tracker}
+      DATABASE_SSL: "false"
+    ports:
+      - "${PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  habit_db_data:
