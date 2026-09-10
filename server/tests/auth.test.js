@@ -22,7 +22,9 @@ let pool;
 
 before(async () => {
   process.env.NODE_ENV = "test";
-  process.env.DATABASE_URL ??= "postgres://habit:habit_dev_password@localhost:5432/habit_tracker";
+  // DATABASE_URL is set by tests/helpers/env.js, loaded via --import before any
+  // module here. No fallback: one that named the development database would be
+  // dead under the sanctioned command and a pointer at real data under any other.
 
   auth = await import("../src/modules/auth/auth.service.js");
   ({ config } = await import("../src/config/index.js"));

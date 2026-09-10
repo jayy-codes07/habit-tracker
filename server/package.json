@@ -11,7 +11,9 @@
     "dev": "node --watch src/server.js",
     "db:migrate": "node src/db/migrate.js",
     "db:seed": "node src/db/seeds/dev-seed.js",
-    "test": "node --test tests/",
+    "test:db": "node tests/helpers/setup-test-db.js",
+    "pretest": "node tests/helpers/setup-test-db.js",
+    "test": "node --test --import ./tests/helpers/env.js tests/",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -25,7 +27,8 @@
     "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "zod": "^4.6.1"
   },
   "main": "src/server.js",
   "devDependencies": {

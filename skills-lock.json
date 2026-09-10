@@ -13,6 +13,36 @@
       "sourceType": "github",
       "skillPath": "skills/shadcn/SKILL.md",
       "computedHash": "d04e43ec01e921558b93bb8046c14a42a22556689a2827243df900825a4e1604"
+    },
+    "thinking-bounded-rationality": {
+      "source": "tjboudreaux/cc-thinking-skills",
+      "sourceType": "github",
+      "skillPath": "skills/thinking-bounded-rationality/SKILL.md",
+      "computedHash": "6658a0afc604ca07bc6e6dcea194248680907f21f7eb0bdf66886583e190a40c"
+    },
+    "thinking-first-principles": {
+      "source": "tjboudreaux/cc-thinking-skills",
+      "sourceType": "github",
+      "skillPath": "skills/thinking-first-principles/SKILL.md",
+      "computedHash": "6597bc013e8c60cb45c992db3b02a5a37390263692139be754965fbaca725402"
+    },
+    "thinking-five-whys-plus": {
+      "source": "tjboudreaux/cc-thinking-skills",
+      "sourceType": "github",
+      "skillPath": "skills/thinking-five-whys-plus/SKILL.md",
+      "computedHash": "ecfdb79b0e7daf8c4365cb3b9650c58f5660e11a5756811defafcc7b192cba5e"
+    },
+    "thinking-jobs-to-be-done": {
+      "source": "tjboudreaux/cc-thinking-skills",
+      "sourceType": "github",
+      "skillPath": "skills/thinking-jobs-to-be-done/SKILL.md",
+      "computedHash": "fc6ff9e73de2a3196fda5f4568e5928c27dc7e0aaab7b951412d334336e5a90f"
+    },
+    "thinking-margin-of-safety": {
+      "source": "tjboudreaux/cc-thinking-skills",
+      "sourceType": "github",
+      "skillPath": "skills/thinking-margin-of-safety/SKILL.md",
+      "computedHash": "535f1e60266c7672252bb74aead3b75f47e42627f6834bd57014b16f8756d5ce"
     }
   }
 }

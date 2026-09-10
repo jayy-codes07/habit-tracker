@@ -26,3 +26,6 @@ Thumbs.db
 # Python bytecode (ui-ux-pro-max skill scripts)
 __pycache__/
 *.py[cod]
+
+# Claude Code local plugin/tool toggles. The tracked .claude/skills/ stay in Git.
+.claude/settings.json

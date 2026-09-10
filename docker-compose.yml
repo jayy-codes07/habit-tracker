@@ -28,7 +28,10 @@ services:
 
   api:
     build:
-      context: ./server
+      # Repository root, not ./server: the runtime image also carries the built
+      # SPA from web/, which a context rooted at server/ could not reach.
+      context: .
+      dockerfile: server/Dockerfile
       target: runtime
     restart: unless-stopped
     # Auth secrets come straight from .env rather than through ${...}
