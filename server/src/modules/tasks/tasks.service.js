@@ -1,0 +1,127 @@
+/**
+ * Tasks.
+ *
+ * There is no hard delete. Removing a task means archiving it, the same gesture
+ * habits use, so nothing a single tap does is irreversible and the export stays
+ * complete. A habit needs a delete escape hatch because it accumulates dependent
+ * log rows; a task has no dependents, so an archived typo costs one row nobody
+ * ever sees.
+ *
+ * Every read here filters archived_at IS NULL. That is a correctness
+ * requirement, not an optimisation: tasks_due_date_open_idx is partial on
+ * `WHERE NOT completed` and says nothing about archiving, so an archived task
+ * that was never completed would otherwise reappear as overdue for ever.
+ */
+import { config } from "../../config/index.js";
+import { query } from "../../db/index.js";
+import { notFound } from "../../lib/errors.js";
+
+const COLUMNS = "id, title, due_date, completed, completed_at, created_at, archived_at";
+
+/** Open tasks by default; `scope: "all"` adds completed ones. Never archived. */
+export async function loadTasks({ includeCompleted = false } = {}) {
+  const { rows } = await query(
+    `SELECT ${COLUMNS}
+       FROM tasks
+      WHERE archived_at IS NULL
+        AND ($1::boolean OR NOT completed)
+      ORDER BY completed, due_date NULLS LAST, created_at`,
+    [includeCompleted],
+  );
+  return rows;
+}
+
+/**
+ * The two lists the day screen needs, in one round trip.
+ *
+ * Overdue is simply "open and due before this day", with no special case for
+ * today: nothing is rolled forward and no due date is ever rewritten, so a task
+ * keeps saying when it was actually meant to happen.
+ */
+export async function loadTasksForDay(date) {
+  const { rows } = await query(
+    `SELECT ${COLUMNS},
+            (due_date < $1 AND NOT completed) AS overdue
+       FROM tasks
+      WHERE archived_at IS NULL
+        AND due_date IS NOT NULL
+        AND (due_date = $1 OR (due_date < $1 AND NOT completed))
+      ORDER BY due_date, created_at`,
+    [date],
+  );
+
+  return {
+    due: rows.filter((row) => !row.overdue).map(strip),
+    overdue: rows.filter((row) => row.overdue).map(strip),
+  };
+}
+
+const strip = ({ overdue: _overdue, ...task }) => task;
+
+export async function createTask({ title, dueDate }) {
+  const { rows } = await query(
+    `INSERT INTO tasks (title, due_date) VALUES ($1, $2) RETURNING ${COLUMNS}`,
+    [title, dueDate ?? null],
+  );
+  return rows[0];
+}
+
+/**
+ * Partial update, including completing and archiving.
+ *
+ * completed and completed_at are set in the same statement because
+ * tasks_completed_consistent forbids them from ever disagreeing. Re-completing
+ * an already-completed task keeps the original moment rather than moving it.
+ *
+ * due_date is the one nullable field, so it needs a separate "was it sent at
+ * all" flag: COALESCE cannot tell "leave it alone" from "clear it".
+ */
+export async function updateTask(id, { title, dueDate, dueDateGiven, completed, archived }) {
+  const { rows } = await query(
+    `UPDATE tasks
+        SET title    = COALESCE($2, title),
+            due_date = CASE WHEN $3::boolean THEN $4::date ELSE due_date END,
+            completed = COALESCE($5::boolean, completed),
+            completed_at = CASE
+              WHEN $5::boolean IS NULL THEN completed_at
+              WHEN $5 THEN COALESCE(completed_at, now())
+              ELSE NULL
+            END,
+            archived_at = CASE
+              WHEN $6::boolean IS NULL THEN archived_at
+              WHEN $6 THEN COALESCE(archived_at, now())
+              ELSE NULL
+            END
+      WHERE id = $1
+      RETURNING ${COLUMNS}`,
+    [id, title ?? null, dueDateGiven, dueDate ?? null, completed ?? null, archived ?? null],
+  );
+
+  if (rows.length === 0) throw notFound("No such task");
+  return rows[0];
+}
+
+/**
+ * What the month did to the task list.
+ *
+ * Instants are compared in the app's own time zone, so "completed in January"
+ * means the calendar month the user lived, not the server's UTC one. The counts
+ * are cast to int because count() is bigint, which node-postgres returns as a
+ * string.
+ */
+export async function countTasksBetween(from, to) {
+  const { rows } = await query(
+    `SELECT
+       count(*) FILTER (
+         WHERE completed_at IS NOT NULL
+           AND (completed_at AT TIME ZONE $1)::date BETWEEN $2 AND $3
+       )::int AS completed,
+       count(*) FILTER (
+         WHERE (created_at AT TIME ZONE $1)::date BETWEEN $2 AND $3
+       )::int AS created
+     FROM tasks
+     WHERE archived_at IS NULL`,
+    [config.timezone, from, to],
+  );
+  return rows[0];
+}

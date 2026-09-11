@@ -8,8 +8,9 @@ Single-user, phone-first habit/task/journal tracker. Express 5 + Postgres 16 API
 ESM only (`"type": "module"`), Node 20+. The React SPA (`web/`) does not exist yet — the server,
 Dockerfile and config are already wired for it and stay inert until it does.
 
-Built in numbered steps; steps 1-3 (foundation, schema, auth) are committed. Feature routers land
-at the marked spot in [server/src/routes/index.js](server/src/routes/index.js).
+Built in numbered steps; steps 1-4 (foundation, schema, auth, the feature API) are committed.
+Every route the SPA needs exists. A new feature router mounts in
+[server/src/routes/index.js](server/src/routes/index.js), below the auth boundary.
 
 ## Commands
 
@@ -66,6 +67,21 @@ security-relevant: `router.use(requireAuth)` is the boundary, and everything mou
 the session cookie. Public routes go above it (which is why `/session` guards itself with an inline
 `requireAuth`: it sits in the public auth router).
 
+A module is only as many files as it needs: `health` and `export` have no service, because they
+have no logic to put in one.
+
+The modules, and why they are grouped this way:
+
+- `habits/` owns habits, **schedule versions and logs too**. Neither has a life of its own — both
+  are reached only through a habit and die with it — so splitting them would buy three routers and
+  a lot of cross-importing for nothing.
+- `tasks/`, `journal/` — one table each.
+- `overview/` owns `/day`, `/grid` and `/review`. It owns **no tables**: it composes the other
+  services and the pure functions in `src/lib/`, which is what keeps the scoring rules in one
+  place. Those endpoints are deliberately fat — a phone should paint a screen in one request.
+- `export/` is the whole database as one JSON file. Raw rows only; anything derived can be
+  recomputed, but a lost row is lost.
+
 ### Ambient transactions
 
 [src/db/index.js](server/src/db/index.js) keeps the in-progress transaction client in an
@@ -78,6 +94,21 @@ so no layer has to thread a client through. Consequences worth knowing before to
   the error does not make it usable again. A nested `withTransaction` is not something a caller can
   attempt and recover from.
 - `runWithClient` exists for the test harness only; application code uses `withTransaction`.
+
+**Exactly two write paths need a transaction**, and both say so at the function: creating a habit
+(a habit with no schedule version resolves to nothing on every date) and reordering (a rejected
+reorder must write nothing). Everything else is a single statement, which Postgres already runs
+atomically — wrapping one in `withTransaction` takes a connection out of a pool of ten and adds two
+round trips to buy nothing. Read endpoints take none: a single user cannot race themselves.
+
+Two single-statement patterns do real work here and are worth recognising:
+
+- `INSERT ... SELECT FROM habits WHERE id = $1 ... ON CONFLICT DO UPDATE` — an unknown id yields
+  zero rows instead of a foreign-key violation, so the caller gets a 404 with no extra existence
+  check and nobody has to map SQLSTATE 23503.
+- The `WITH victim AS (DELETE ... WHERE NOT EXISTS ...)` CTE in `deleteHabit`, which distinguishes
+  204 / 409 / 404 from one snapshot. A check followed by a delete would leave a window where a log
+  written between the two is destroyed by the cascade.
 
 ### Tests: one rolled-back transaction each
 
@@ -93,6 +124,28 @@ that transaction through the ambient client above.
   overrides and return the inserted row; override only the column the test is about.
 - The test database name must end in `_test` — [tests/helpers/database-url.js](server/tests/helpers/database-url.js)
   refuses anything else. It is derived from `DATABASE_URL` unless `TEST_DATABASE_URL` is set.
+- `withApi()` in [tests/helpers/api.js](server/tests/helpers/api.js) wraps `withRollbackServer` with
+  a logged-in request helper; everything past the auth boundary uses it.
+- **No test may commit.** `db-harness.test.js` asserts the database is empty between tests and will
+  fail in the *wrong* file if one does. Anything needing a real commit follows
+  `migrate-and-seed.test.js` and uses its own scratch database.
+- Most coverage is **pure**: `dates`, `scheduling` and `streaks` tests touch no database at all, so
+  the nasty edge cases run in milliseconds with no fixtures. Reach for an HTTP test when the thing
+  under test is the wiring, not the arithmetic.
+- Adding a schema constraint means bumping the `cases.length` tripwire in `constraints.test.js`.
+
+### Today comes from APP_TIMEZONE, never the server clock
+
+`today()` in [src/lib/dates.js](server/src/lib/dates.js) is the single source of the current date,
+resolved through `config.timezone` (`APP_TIMEZONE`, an IANA name, default `UTC`, validated at
+config load so a bad value fails at boot). **Nothing outside `dates.js` calls `new Date()` to find
+out what day it is.**
+
+The container runs UTC. A server-clock "today" is therefore wrong for part of every day in any
+other zone, and a habit tracker that decides the day wrongly reports broken streaks — the one
+failure that destroys trust in the whole thing. `todayIn()` assembles the date from
+`Intl.DateTimeFormat(...).formatToParts()` rather than slicing `format()`, which would be hostage
+to ICU locale data.
 
 ### Config is a boot-time snapshot
 
@@ -127,8 +180,13 @@ live in constraints, with the reasoning in comments.
 
 - **Calendar days are `DATE`, never timestamps**; event instants are `TIMESTAMPTZ`. `src/db/index.js`
   overrides the node-postgres parser for oid 1082 so dates stay `'YYYY-MM-DD'` strings — do not
-  reintroduce `Date` objects for them. Date arithmetic in the seed happens at noon UTC for the same
-  reason.
+  reintroduce `Date` objects for them. All date arithmetic lives in
+  [src/lib/dates.js](server/src/lib/dates.js) and happens at noon UTC, so a DST transition can
+  never push a result onto the neighbouring day. ISO date strings also compare lexicographically,
+  so `a <= b` is a correct date comparison and needs no parsing.
+- **`id` is a string everywhere.** Every id is `bigint`, and node-postgres returns bigint as a
+  string — there is no type-parser override for oid 20, only for DATE. Ids stay strings through the
+  API and back into query parameters; zod validates `/^\d+$/`, never `z.number()`.
 - **Weekdays are ISO-8601**: 1 = Monday … 7 = Sunday, matching Postgres `ISODOW` and the product's
   Monday week start.
 - **A habit does not carry its schedule.** `habit_schedules` holds dated versions; the schedule in
@@ -142,6 +200,47 @@ live in constraints, with the reasoning in comments.
 - `habits.color_token` is a theme token (`chart-1`…`chart-5`), never hex. `target_value`, `unit` and
   `habit_logs.value` are v2 quantity habits, NULL in v1.
 - `updated_at` is stamped by a `BEFORE UPDATE` trigger on every table, never by callers.
+- **Tasks are archived, never deleted.** There is no `DELETE /api/tasks/:id`. Consequently every
+  task query must filter `archived_at IS NULL` — `tasks_due_date_open_idx` is partial on
+  `WHERE NOT completed` and says nothing about archiving, so an archived open task would otherwise
+  reappear as overdue for ever. That is a correctness requirement, not an optimisation.
+- **Habits can be deleted only while they have no logs** (409 otherwise). Archive a history, delete
+  a mistake.
+
+### Streaks and consistency
+
+Live in [src/lib/scheduling.js](server/src/lib/scheduling.js) and
+[src/lib/streaks.js](server/src/lib/streaks.js) as **pure functions over rows already in memory** —
+no queries, no fixtures, and therefore cheap to test exhaustively. Resolution is done in JavaScript
+rather than SQL because every consumer needs it for a *range* of days: in SQL that is one lateral
+subquery per (habit, day), ~840 for a twelve-week grid, against a handful of versions per habit.
+
+Nothing is stored. Both are recomputed on every read, which is what makes retroactive edits simply
+work — log a day you forgot and the streak that depended on it is correct immediately.
+
+One shared verdict function, two streak algorithms. Not one generic one: fixed counts days, weekly
+counts weeks, and unifying them would mean inventing a period abstraction for exactly two cases.
+
+- `dayVerdict()` returns one of nine states. `missed` (you said so) and `unlogged` (no row at all)
+  stay distinct all the way into the grid, because they are different claims.
+- **Fixed streaks** break only on `missed` or `unlogged`. `skipped`, paused, unscheduled and bonus
+  days pass through. An unlogged **today** is `future` and therefore neutral — an unticked habit at
+  9am must never read as broken — but an *explicit* `missed` today does break it.
+- **Weekly streaks** rest on one rule that resolves every mid-week case: a week that was not fully
+  lived is **provisional — it can be satisfied, but it can never fail**. That covers the current
+  week, a week a pause starts or ends in, and a week straddling the habit's start, all with the
+  same arithmetic.
+- A week's target is the one in force on its **first active, unpaused day**. So a target changed
+  mid-week governs the following week: immune both to being raised on Saturday to punish and to
+  being lowered on Sunday to rescue. Paused-ness is read from the schedule version, never from the
+  verdict — a day worked during a pause reports `bonus`, not `paused`.
+- **A change of schedule kind does not reset the streak.** Each period is scored under the kind
+  that governed it, expressed in the current unit; a fixed-governed week is "met" when none of its
+  scheduled days failed. Losing six months as a side effect of an edit is the worst thing this app
+  could do.
+- **Consistency is separate from the streak** and always reported alongside it. Skipped days leave
+  the denominator entirely; paused days never enter it; a weekly week contributes its target with
+  done days capped at it, so the rate cannot exceed 100%.
 
 ### Auth
 
@@ -161,6 +260,13 @@ session, so restarts and multiple instances need no coordination.
   submitted value, never logged.
 
 ### Errors
+
+Validation is `schema.parse(...)` inline in the controller and nothing else — Express 5 forwards a
+rejected async handler on its own, and the handler already renders a `ZodError` as a 400. There is
+deliberately **no `validate()` middleware**. Zod schemas live at the top of the controller that uses
+them; only genuinely cross-module primitives (`idParam`, `isoDate`, `isoMonth`) go in
+[src/lib/schemas.js](server/src/lib/schemas.js). `isoDate` carries a `.refine()` as well as a
+pattern, because the pattern alone accepts `2026-02-31` — which Postgres would reject as a 500.
 
 Throw `AppError` (or `badRequest` / `notFound` / `conflict` from [src/lib/errors.js](server/src/lib/errors.js))
 for expected failures; the handler answers with that status and does **not** log 4xx, so real 500s

@@ -6,7 +6,8 @@
  * history stays adjacent to today — which is what makes a consistency grid and a
  * streak calculation meaningful to look at.
  *
- * "The same day" is the local date, read once at import (todayLocal below). Two
+ * "The same day" is the date in the configured time zone (APP_TIMEZONE), read
+ * once at import via today(). Two
  * runs that straddle local midnight therefore produce different data, and the
  * determinism test in tests/migrate-and-seed.test.js — which seeds twice and
  * compares digests — would fail with "re-seeding produced different data". That
@@ -24,39 +25,26 @@
  *   npm run db:seed
  */
 import { config } from "../../config/index.js";
+import {
+  addDays,
+  addMonths,
+  eachDay,
+  instantOn,
+  isoWeekday,
+  monthOf,
+  startOfWeek,
+  today,
+} from "../../lib/dates.js";
 import { pool, withTransaction } from "../index.js";
 
-// ---------------------------------------------------------------------------
-// Date helpers. All arithmetic happens at noon UTC so a DST transition can never
-// push a date onto the wrong day, and dates cross the wire as 'YYYY-MM-DD'.
-// ---------------------------------------------------------------------------
+// Dates are 'YYYY-MM-DD' strings throughout, which compare correctly with <=,
+// so the ranges below need no parsing. The arithmetic lives in lib/dates.js -
+// the same helpers the application uses, rather than a second copy of the
+// noon-UTC trick that could drift away from it.
 
-const DAY_MS = 86_400_000;
-
-function todayLocal() {
-  const now = new Date();
-  return Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 12);
-}
-
-const toISO = (stamp) => new Date(stamp).toISOString().slice(0, 10);
-const addDays = (stamp, days) => stamp + days * DAY_MS;
-
-/** ISO weekday: 1 = Monday ... 7 = Sunday. */
-const isoWeekday = (stamp) => new Date(stamp).getUTCDay() || 7;
-
-/** Monday of the week containing `stamp`. */
-const startOfWeek = (stamp) => addDays(stamp, -(isoWeekday(stamp) - 1));
-
-const TODAY = todayLocal();
+const TODAY = today();
 const HISTORY_DAYS = 97; // 14 weeks of history, inclusive of today
 const HISTORY_START = addDays(TODAY, -HISTORY_DAYS);
-
-/** Every date from `from` to `to`, inclusive. */
-function dateRange(from, to) {
-  const out = [];
-  for (let d = from; d <= to; d = addDays(d, 1)) out.push(d);
-  return out;
-}
 
 const EVERY_DAY = [1, 2, 3, 4, 5, 6, 7];
 
@@ -142,19 +130,20 @@ const habits = [
 // Resolved once, before any generator runs, because the generators need to know
 // where a habit's history stops.
 for (const habit of habits) {
-  habit.archived_at = habit.archived_days_ago ? addDays(TODAY, -habit.archived_days_ago) : null;
+  habit.archived_on = habit.archived_days_ago ? addDays(TODAY, -habit.archived_days_ago) : null;
 }
 
 /**
- * The schedule in force on `stamp`: the latest version that has started. Nothing
+ * The schedule in force on `date`: the latest version that has started. Nothing
  * resolves before start_date — the habit did not exist yet. Mirrors the rule
- * documented on habit_schedules in 001_init.sql.
+ * documented on habit_schedules in 001_init.sql, and the production resolver in
+ * lib/scheduling.js.
  */
-function resolveSchedule(habit, stamp) {
-  if (stamp < habit.start_date) return null;
+function resolveSchedule(habit, date) {
+  if (date < habit.start_date) return null;
   let current = null;
   for (const version of habit.schedules) {
-    if (version.effective_from > stamp) break;
+    if (version.effective_from > date) break;
     current = version;
   }
   return current;
@@ -162,7 +151,7 @@ function resolveSchedule(habit, stamp) {
 
 /** Every date the habit was actually meant to be done, oldest first. */
 function scheduledDates(habit) {
-  return dateRange(habit.start_date, habit.archived_at ?? TODAY).filter((day) => {
+  return eachDay(habit.start_date, habit.archived_on ?? TODAY).filter((day) => {
     const version = resolveSchedule(habit, day);
     return version?.kind === "fixed" && version.days.includes(isoWeekday(day));
   });
@@ -200,7 +189,7 @@ function fixedLogs(
       const back = lastIndex - i; // 0 = most recent scheduled day
       if (noRow.has(back)) return null; // no row at all
       const status = missed.has(back) ? "missed" : skipped.has(back) ? "skipped" : "done";
-      return { date: toISO(day), status, note: notes[back] ?? null };
+      return { date: day, status, note: notes[back] ?? null };
     })
     .filter(Boolean);
 }
@@ -210,7 +199,7 @@ function weeklyLogs(habit, { candidates, countForWeek }) {
   const rows = [];
   const firstWeek = startOfWeek(habit.start_date);
   const currentWeek = startOfWeek(TODAY);
-  const end = habit.archived_at ?? TODAY;
+  const end = habit.archived_on ?? TODAY;
 
   for (let week = firstWeek, index = 0; week <= currentWeek; week = addDays(week, 7), index += 1) {
     const isCurrentWeek = week === currentWeek;
@@ -221,7 +210,7 @@ function weeklyLogs(habit, { candidates, countForWeek }) {
 
     const target = countForWeek({ index, isCurrentWeek });
     for (const day of available.slice(0, target)) {
-      rows.push({ date: toISO(day), status: "done", note: null });
+      rows.push({ date: day, status: "done", note: null });
     }
   }
   return rows;
@@ -269,8 +258,10 @@ const logPlans = {
       },
     }),
 
-  // Current streak is 4 and crosses a skipped day: 0 done, 1 skipped, 2-3 done,
-  // 4 missed. The cleanest assertion that 'skipped' does not break a streak.
+  // Scheduled days back from the most recent: 0 done, 1 skipped, 2-3 done,
+  // 4 missed. The cleanest assertion that 'skipped' does not BREAK a streak —
+  // the current streak here is 3, not 4, because a skipped day preserves the
+  // streak without adding to it. You did not do it; you just did not fail.
   stretch: (h) => fixedLogs(h, { missedIndexes: [4], skippedIndexes: [1] }),
 
   // Abandoned before it was archived: the last four scheduled days have no rows.
@@ -324,9 +315,9 @@ const monthEntries = [
   },
 ];
 
+/** Monthly reflections are keyed to the first of their month (journal_month_anchored). */
 function firstOfMonth(monthsAgo) {
-  const now = new Date(TODAY);
-  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthsAgo, 1, 12);
+  return `${addMonths(monthOf(TODAY), -monthsAgo)}-01`;
 }
 
 // ---------------------------------------------------------------------------
@@ -357,8 +348,8 @@ async function seed() {
           habit.name,
           habit.color_token,
           habit.sort_order,
-          toISO(habit.start_date),
-          habit.archived_at ? new Date(habit.archived_at).toISOString() : null,
+          habit.start_date,
+          habit.archived_on ? instantOn(habit.archived_on) : null,
         ],
       );
       habit.id = rows[0].id;
@@ -370,7 +361,7 @@ async function seed() {
            VALUES ($1, $2, $3, $4, $5)`,
           [
             habit.id,
-            toISO(version.effective_from),
+            version.effective_from,
             version.kind,
             version.days ?? null,
             version.weeklyTarget ?? null,
@@ -396,26 +387,24 @@ async function seed() {
           task.title,
           task.due_days === null || task.due_days === undefined
             ? null
-            : toISO(addDays(TODAY, task.due_days)),
+            : addDays(TODAY, task.due_days),
           task.completed,
-          task.completed ? new Date(addDays(TODAY, -task.completed_days_ago)).toISOString() : null,
-          task.archived_days_ago
-            ? new Date(addDays(TODAY, -task.archived_days_ago)).toISOString()
-            : null,
+          task.completed ? instantOn(addDays(TODAY, -task.completed_days_ago)) : null,
+          task.archived_days_ago ? instantOn(addDays(TODAY, -task.archived_days_ago)) : null,
         ],
       );
     }
 
     for (const [daysAgo, entry] of Object.entries(dayEntries)) {
       await client.query("INSERT INTO journal (date, kind, entry) VALUES ($1, 'day', $2)", [
-        toISO(addDays(TODAY, -Number(daysAgo))),
+        addDays(TODAY, -Number(daysAgo)),
         entry,
       ]);
     }
 
     for (const month of monthEntries) {
       await client.query("INSERT INTO journal (date, kind, entry) VALUES ($1, 'month', $2)", [
-        toISO(firstOfMonth(month.months_ago)),
+        firstOfMonth(month.months_ago),
         month.entry,
       ]);
     }
@@ -424,8 +413,8 @@ async function seed() {
   });
 
   const { done, missed, skipped } = counts.statusCounts;
-  console.log(`[seed] today       ${toISO(TODAY)} (ISO weekday ${isoWeekday(TODAY)})`);
-  console.log(`[seed] history     ${toISO(HISTORY_START)} -> ${toISO(TODAY)}`);
+  console.log(`[seed] today       ${TODAY} (ISO weekday ${isoWeekday(TODAY)}, ${config.timezone})`);
+  console.log(`[seed] history     ${HISTORY_START} -> ${TODAY}`);
   console.log(`[seed] habits      ${habits.length}`);
   console.log(`[seed] schedules   ${counts.scheduleCount}`);
   console.log(`[seed] habit_logs  ${done + missed + skipped}`);
@@ -434,10 +423,8 @@ async function seed() {
   console.log(
     `[seed] journal     ${Object.keys(dayEntries).length} day + ${monthEntries.length} month`,
   );
-  console.log(`[seed] run schedule change  ${toISO(RUN_SCHEDULE_CHANGE)}`);
-  console.log(
-    `[seed] read paused          ${toISO(READ_PAUSE_FROM)} -> ${toISO(addDays(READ_PAUSE_UNTIL, -1))}`,
-  );
+  console.log(`[seed] run schedule change  ${RUN_SCHEDULE_CHANGE}`);
+  console.log(`[seed] read paused          ${READ_PAUSE_FROM} -> ${addDays(READ_PAUSE_UNTIL, -1)}`);
 }
 
 /**
@@ -450,7 +437,8 @@ async function seed() {
  *   meditate  patchy: every 3rd scheduled day has no row at all (never logged,
  *             not 'missed'), plus deliberate 'skipped' rest days
  *   gym       weekly target 3, current week short at 2
- *   stretch   starts mid-history; current streak 4, crossing a 'skipped' day
+ *   stretch   starts mid-history; current streak 3 done days, spanning a
+ *             'skipped' day that preserves the streak without incrementing it
  *   cold      archived, with no rows for its final scheduled days
  */
 

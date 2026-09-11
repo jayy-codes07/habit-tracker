@@ -238,23 +238,3 @@ export async function makeJournal(overrides = {}) {
   );
   return rows[0];
 }
-
-/**
- * Resolves the schedule in force on `date`, by the rule documented on
- * habit_schedules: the latest version that has started, and nothing before the
- * habit's own start_date.
- */
-export async function scheduleOn(habitId, date) {
-  const { rows } = await query(
-    `SELECT s.*
-       FROM habit_schedules s
-       JOIN habits h ON h.id = s.habit_id
-      WHERE s.habit_id = $1
-        AND s.effective_from <= $2
-        AND $2 >= h.start_date
-      ORDER BY s.effective_from DESC
-      LIMIT 1`,
-    [habitId, date],
-  );
-  return rows[0] ?? null;
-}

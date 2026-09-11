@@ -3,7 +3,12 @@ import { Router } from "express";
 import { notFoundHandler } from "../middleware/error-handler.js";
 import { requireAuth } from "../middleware/require-auth.js";
 import { createAuthRouter } from "../modules/auth/auth.routes.js";
+import { createExportRouter } from "../modules/export/export.routes.js";
+import { createHabitsRouter } from "../modules/habits/habits.routes.js";
 import { createHealthRouter } from "../modules/health/health.routes.js";
+import { createJournalRouter } from "../modules/journal/journal.routes.js";
+import { createOverviewRouter } from "../modules/overview/overview.routes.js";
+import { createTasksRouter } from "../modules/tasks/tasks.routes.js";
 
 /**
  * Owns the API's mount order, which is security-relevant:
@@ -21,8 +26,13 @@ export function createApiRouter() {
   // --- Authentication boundary. Nothing below is reachable without a cookie. ---
   router.use(requireAuth);
 
-  // Feature routers land here in Step 4:
-  //   router.use("/habits", createHabitsRouter());
+  router.use("/habits", createHabitsRouter());
+  router.use("/tasks", createTasksRouter());
+  router.use("/journal", createJournalRouter());
+
+  // Whole-screen reads and the backup, each declaring its own path.
+  router.use(createOverviewRouter());
+  router.use(createExportRouter());
 
   router.use(notFoundHandler);
 

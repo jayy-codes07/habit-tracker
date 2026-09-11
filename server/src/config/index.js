@@ -19,6 +19,23 @@ dotenv.config({
   quiet: true, // no startup banner on stdout; it would corrupt piped output
 });
 
+/**
+ * Rejects a bad IANA zone at boot rather than at the first request that needs
+ * today's date. Intl is the only authority on what zones exist, and it throws a
+ * RangeError on an unknown one; catching that here is cheaper than discovering
+ * it as a 500 weeks later. Done inline rather than via lib/dates.js, which
+ * imports this module.
+ */
+function timeZone(name) {
+  const value = process.env[name] ?? "UTC";
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: value });
+  } catch {
+    throw new Error(`${name} is not a valid IANA time zone: ${value}`);
+  }
+  return value;
+}
+
 function required(name) {
   const value = process.env[name];
   if (!value) {
@@ -32,6 +49,11 @@ function required(name) {
 export const config = {
   env: process.env.NODE_ENV ?? "development",
   port: Number(process.env.PORT ?? 3000),
+
+  // The calendar day the app is living in. A habit is done on a day, and the
+  // container runs UTC, so without this the day rolls over at the wrong moment
+  // for any other zone and streaks read wrongly for part of every day.
+  timezone: timeZone("APP_TIMEZONE"),
 
   databaseUrl: required("DATABASE_URL"),
   // Managed Postgres requires TLS; the local container does not offer it.

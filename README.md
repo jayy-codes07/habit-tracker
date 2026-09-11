@@ -53,6 +53,16 @@ npm run lint          # also: lint:fix, format, format:check
 npm run format:check
 ```
 
+## Time zone
+
+`APP_TIMEZONE` (an IANA name, default `UTC`) decides what day it currently is. A habit is done on a
+day, not at an instant, and the container runs UTC - so without this the day rolls over at midnight
+UTC and streaks read wrongly for part of every day anywhere else. An invalid zone fails at boot
+rather than as a 500 on the first request.
+
+Everything that needs today's date goes through `today()` in `src/lib/dates.js`. Nothing else calls
+`new Date()` to find out what day it is.
+
 ## Tests
 
 Tests run against a separate database, `habit_tracker_test`, so a run can never
@@ -155,3 +165,81 @@ never logged, which is a distinct state from any of them.
 | `GET /api/session` | required | whether the current cookie is still valid |
 
 Everything mounted after `requireAuth` in `src/routes/index.js` needs the cookie.
+
+### Habits
+
+| Route | Purpose |
+|---|---|
+| `GET /api/habits?include=archived` | habits in display order, each with the schedule in force today |
+| `POST /api/habits` | habit + its first schedule version |
+| `PATCH /api/habits/:id` | `name`, `color_token`, `archived` |
+| `DELETE /api/habits/:id` | 204, or **409 if it has any logs** - archive a history, delete a mistake |
+| `PUT /api/habits/order` | `{ ids: [...] }`, the complete list of active habits |
+| `POST /api/habits/:id/schedule` | appends a version; `effective_from` defaults to today and may not be in the past |
+| `PUT /api/habits/:id/logs/:date` | `{ status, note? }` where status is `done` / `missed` / `skipped` |
+| `DELETE /api/habits/:id/logs/:date` | removes the row, returning the day to *never logged* |
+
+A schedule change re-posted on the same `effective_from` **overwrites** that version rather
+than colliding, so a schedule mistyped a minute ago can be corrected. Backdating one is refused:
+that would re-score history.
+
+### Tasks and journal
+
+| Route | Purpose |
+|---|---|
+| `GET /api/tasks?scope=open\|all` | open tasks by default; never archived ones |
+| `POST /api/tasks` | `{ title, due_date? }` |
+| `PATCH /api/tasks/:id` | `title`, `due_date` (null clears it), `completed`, `archived` |
+| `PUT\|DELETE /api/journal/day/:date` | the daily one-liner |
+| `PUT\|DELETE /api/journal/month/:yyyy-mm` | the monthly reflection, anchored to the 1st |
+
+**Tasks have no DELETE.** Removal is `PATCH { archived: true }`, so nothing a single tap does is
+irreversible and the export stays complete. Journal entries cannot be blank, so *clearing* one is
+a `DELETE`.
+
+### Screens
+
+| Route | Purpose |
+|---|---|
+| `GET /api/day/:date` | habits + status + streaks, tasks due and overdue, the day's journal entry |
+| `GET /api/grid?end=&weeks=` | the consistency grid; `weeks` 1-53, default 12, `end` defaults to today |
+| `GET /api/review/:yyyy-mm` | per-habit consistency and streaks, task counts, the month's journal |
+| `GET /api/export` | every table as one JSON file, archived rows included |
+
+`/api/day` and `/api/grid` are deliberately fat: a phone should paint a screen from one request,
+not five.
+
+The grid is **always whole Monday-to-Sunday weeks**. It ends on the Sunday of the week containing
+`end` and starts `weeks - 1` weeks before that week's Monday, so every row is exactly `weeks * 7`
+characters and a cell can be indexed by offset. Each habit's `cells` string uses one character per
+day:
+
+| | | | |
+|---|---|---|---|
+| `d` done | `m` missed (explicitly) | `u` unlogged (past, scheduled, no row) | `s` skipped |
+| `p` paused | `.` not scheduled | `f` not yet due (today or later) | `b` bonus (done unscheduled) |
+| `-` inactive (before it started, or after it was archived) | | | |
+
+`m` and `u` stay distinct because they are different claims: one is a day you looked at and
+admitted missing, the other a day you never opened the app.
+
+### Streaks and consistency
+
+Nothing is stored; both are recomputed on every read, which is what makes retroactive edits just
+work. The rules:
+
+- **Fixed habits** count consecutive scheduled days. `skipped`, paused days and unscheduled days
+  all pass through without breaking anything. An unlogged **today** is not yet due, so a habit
+  unticked at 9am never reads as broken - but a day explicitly marked `missed` does break it,
+  today included.
+- **Weekly habits** count consecutive weeks meeting target. A week that was not fully lived - the
+  current one, one a pause starts or ends in, one straddling the habit's start - is
+  **provisional**: it can be satisfied, but it can never fail.
+- A week's target is the one in force on its **first active day**, so changing a target mid-week
+  governs the following week. That is immune both to raising it on Saturday and to lowering it on
+  Sunday.
+- Changing a habit between fixed and weekly does **not** reset the streak. Each period is scored
+  under the schedule that actually governed it.
+- **Consistency** is separate: `done / (scheduled - skipped)` over a window. Skipped days leave the
+  denominator entirely, paused days never enter it, and a weekly week contributes its target with
+  done days capped at it, so the rate can never exceed 100%.

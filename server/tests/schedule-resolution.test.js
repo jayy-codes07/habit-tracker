@@ -1,126 +1,100 @@
 /**
- * Resolving a habit's schedule for a given day.
+ * The boundary between stored schedule versions and the resolver that reads them.
  *
- * This is the rule the whole consistency grid rests on: the version in force on
- * date D is the latest one that has started, and nothing resolves before the
- * habit's own start_date. Getting it wrong does not throw — it silently
- * re-scores history, which is exactly the failure the versioned schedule was
- * introduced to prevent.
+ * The resolution *rule* is a pure function now and is covered exhaustively, with
+ * no database, in scheduling.test.js. What is left here is the part that can
+ * only be checked against a real Postgres: that the rows come back in the shape
+ * resolveSchedule assumes.
+ *
+ * That shape is load-bearing and easy to break silently:
+ *   * effective_from must arrive as a 'YYYY-MM-DD' string, not a Date — the
+ *     resolver compares dates with <=, and a Date object would compare by
+ *     reference coercion and quietly resolve the wrong version.
+ *   * versions must arrive ascending, because the resolver walks forward and
+ *     keeps the last one that has started.
+ *   * schedule_days must arrive as an array of numbers to match isoWeekday().
+ *
+ * Until Step 3.5 this file tested a scheduleOn() helper that lived only in the
+ * test harness, so it verified an implementation production never called. The
+ * resolver now lives in src/lib/scheduling.js and this asserts the contract it
+ * depends on.
  *
  *   npm test
  */
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 
-import { closePool, makeHabit, makeSchedule, scheduleOn, withRollback } from "./helpers/db.js";
+import { query } from "../src/db/index.js";
+import { isIsoDate } from "../src/lib/dates.js";
+import { resolveSchedule } from "../src/lib/scheduling.js";
+import { closePool, makeHabit, makeSchedule, withRollback } from "./helpers/db.js";
 
 after(closePool);
 
 const START = "2026-01-05"; // a Monday
 const CHANGED = "2026-02-02"; // four weeks later, also a Monday
 
-/** Mirrors the seed's 'run': Mon/Wed/Fri, later moved to Tue/Thu. */
-async function habitWithScheduleChange() {
-  const habit = await makeHabit({ start_date: START, schedule: false });
-  await makeSchedule(habit.id, { effective_from: START, schedule_days: [1, 3, 5] });
-  await makeSchedule(habit.id, { effective_from: CHANGED, schedule_days: [2, 4] });
-  return habit;
+/** The query the habits service uses to load a habit's schedule history. */
+function loadVersions(habitId) {
+  return query(
+    `SELECT effective_from, schedule_kind, schedule_days, weekly_target
+       FROM habit_schedules
+      WHERE habit_id = $1
+      ORDER BY effective_from`,
+    [habitId],
+  ).then(({ rows }) => rows);
 }
 
-describe("schedule resolution", () => {
-  it("resolves nothing before the habit started", async () => {
+describe("stored schedule versions", () => {
+  it("come back in the shape the resolver expects", async () => {
     await withRollback(async () => {
-      const habit = await habitWithScheduleChange();
-      assert.equal(await scheduleOn(habit.id, "2026-01-04"), null);
-      assert.equal(await scheduleOn(habit.id, "2025-12-31"), null);
+      const habit = await makeHabit({ start_date: START, schedule: false });
+      await makeSchedule(habit.id, { effective_from: START, schedule_days: [1, 3, 5] });
+
+      const [version] = await loadVersions(habit.id);
+
+      assert.equal(typeof version.effective_from, "string", "effective_from must not be a Date");
+      assert.equal(isIsoDate(version.effective_from), true);
+      assert.equal(version.effective_from, START);
+      assert.equal(version.schedule_kind, "fixed");
+      assert.deepEqual(version.schedule_days, [1, 3, 5]);
+      assert.equal(version.weekly_target, null);
+      // The resolver compares weekdays as numbers.
+      assert.equal(typeof version.schedule_days[0], "number");
     });
   });
 
-  it("resolves the first version on the start date itself", async () => {
+  it("are ordered oldest first, whatever order they were written in", async () => {
     await withRollback(async () => {
-      const habit = await habitWithScheduleChange();
-      const schedule = await scheduleOn(habit.id, START);
-      assert.deepEqual(schedule.schedule_days, [1, 3, 5]);
+      const habit = await makeHabit({ start_date: START, schedule: false });
+      // Deliberately inserted out of order.
+      await makeSchedule(habit.id, { effective_from: CHANGED, schedule_days: [2, 4] });
+      await makeSchedule(habit.id, { effective_from: START, schedule_days: [1, 3, 5] });
+
+      const versions = await loadVersions(habit.id);
+      assert.deepEqual(
+        versions.map((version) => version.effective_from),
+        [START, CHANGED],
+      );
     });
   });
 
-  it("keeps the old version for every day before the change", async () => {
+  it("resolve end to end, from stored rows to a verdict-ready version", async () => {
     await withRollback(async () => {
-      const habit = await habitWithScheduleChange();
-      for (const date of ["2026-01-05", "2026-01-20", "2026-02-01"]) {
-        const schedule = await scheduleOn(habit.id, date);
-        assert.deepEqual(schedule.schedule_days, [1, 3, 5], `wrong version on ${date}`);
-      }
+      const habit = await makeHabit({ start_date: START, schedule: false });
+      await makeSchedule(habit.id, { effective_from: START, schedule_days: [1, 3, 5] });
+      await makeSchedule(habit.id, { effective_from: CHANGED, schedule_kind: "paused" });
+
+      const versions = await loadVersions(habit.id);
+
+      assert.equal(resolveSchedule(versions, START, "2026-01-04"), null, "before the start");
+      assert.deepEqual(resolveSchedule(versions, START, START).schedule_days, [1, 3, 5]);
+      assert.deepEqual(resolveSchedule(versions, START, "2026-02-01").schedule_days, [1, 3, 5]);
+      assert.equal(resolveSchedule(versions, START, CHANGED).schedule_kind, "paused");
     });
   });
 
-  it("switches on the day the new version takes effect, not before", async () => {
-    await withRollback(async () => {
-      const habit = await habitWithScheduleChange();
-
-      const dayBefore = await scheduleOn(habit.id, "2026-02-01");
-      assert.deepEqual(dayBefore.schedule_days, [1, 3, 5]);
-
-      const onTheDay = await scheduleOn(habit.id, CHANGED);
-      assert.deepEqual(onTheDay.schedule_days, [2, 4]);
-    });
-  });
-
-  it("keeps the latest version indefinitely", async () => {
-    await withRollback(async () => {
-      const habit = await habitWithScheduleChange();
-      const schedule = await scheduleOn(habit.id, "2027-06-30");
-      assert.deepEqual(schedule.schedule_days, [2, 4]);
-    });
-  });
-});
-
-describe("paused spans", () => {
-  /** Mirrors the seed's 'read': daily, paused for a week, then daily again. */
-  async function pausedHabit() {
-    const habit = await makeHabit({ start_date: START, schedule: false });
-    await makeSchedule(habit.id, { effective_from: START });
-    await makeSchedule(habit.id, { effective_from: "2026-02-02", schedule_kind: "paused" });
-    await makeSchedule(habit.id, { effective_from: "2026-02-09" });
-    return habit;
-  }
-
-  it("resolves as paused for every day of the pause", async () => {
-    await withRollback(async () => {
-      const habit = await pausedHabit();
-      for (const date of ["2026-02-02", "2026-02-05", "2026-02-08"]) {
-        const schedule = await scheduleOn(habit.id, date);
-        assert.equal(schedule.schedule_kind, "paused", `not paused on ${date}`);
-        assert.equal(schedule.schedule_days, null);
-        assert.equal(schedule.weekly_target, null);
-      }
-    });
-  });
-
-  it("is scheduled again the day the pause ends", async () => {
-    await withRollback(async () => {
-      const habit = await pausedHabit();
-
-      const lastPausedDay = await scheduleOn(habit.id, "2026-02-08");
-      assert.equal(lastPausedDay.schedule_kind, "paused");
-
-      const resumed = await scheduleOn(habit.id, "2026-02-09");
-      assert.equal(resumed.schedule_kind, "fixed");
-      assert.deepEqual(resumed.schedule_days, [1, 2, 3, 4, 5, 6, 7]);
-    });
-  });
-
-  it("still resolves normally before the pause began", async () => {
-    await withRollback(async () => {
-      const habit = await pausedHabit();
-      const schedule = await scheduleOn(habit.id, "2026-02-01");
-      assert.equal(schedule.schedule_kind, "fixed");
-    });
-  });
-});
-
-describe("weekly targets", () => {
-  it("carries the target of the version in force", async () => {
+  it("keeps a weekly target as a number", async () => {
     await withRollback(async () => {
       const habit = await makeHabit({ start_date: START, schedule: false });
       await makeSchedule(habit.id, {
@@ -128,35 +102,11 @@ describe("weekly targets", () => {
         schedule_kind: "weekly",
         weekly_target: 3,
       });
-      await makeSchedule(habit.id, {
-        effective_from: CHANGED,
-        schedule_kind: "weekly",
-        weekly_target: 5,
-      });
 
-      assert.equal((await scheduleOn(habit.id, "2026-01-20")).weekly_target, 3);
-      assert.equal((await scheduleOn(habit.id, CHANGED)).weekly_target, 5);
-    });
-  });
-
-  it("can switch a habit between fixed and weekly over time", async () => {
-    await withRollback(async () => {
-      const habit = await makeHabit({ start_date: START, schedule: false });
-      await makeSchedule(habit.id, { effective_from: START, schedule_days: [1, 3, 5] });
-      await makeSchedule(habit.id, {
-        effective_from: CHANGED,
-        schedule_kind: "weekly",
-        weekly_target: 4,
-      });
-
-      const before = await scheduleOn(habit.id, "2026-01-19");
-      assert.equal(before.schedule_kind, "fixed");
-      assert.equal(before.weekly_target, null);
-
-      const later = await scheduleOn(habit.id, "2026-02-16");
-      assert.equal(later.schedule_kind, "weekly");
-      assert.equal(later.schedule_days, null);
-      assert.equal(later.weekly_target, 4);
+      const [version] = await loadVersions(habit.id);
+      assert.equal(version.weekly_target, 3);
+      assert.equal(typeof version.weekly_target, "number", "smallint must not arrive as a string");
+      assert.equal(version.schedule_days, null);
     });
   });
 });
