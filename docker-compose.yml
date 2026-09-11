@@ -33,6 +33,11 @@ services:
       context: .
       dockerfile: server/Dockerfile
       target: runtime
+      args:
+        # Without this the Dockerfile's default (web-empty) wins and every image
+        # built here ships with no frontend, silently: mountSpa() finds no
+        # index.html and serves its placeholder instead.
+        WEB_STAGE: web-build
     restart: unless-stopped
     # Auth secrets come straight from .env rather than through ${...}
     # interpolation. A missing file is fine - the API then fails at boot with a

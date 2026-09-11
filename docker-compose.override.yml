@@ -5,6 +5,14 @@
 #   docker compose -f docker-compose.yml up --build
 services:
   api:
+    build:
+      args:
+        # The bind mount below puts server/ at /app, which shadows the image's
+        # /app/web — so this container could not serve the SPA even if it
+        # carried one. Building it here would cost a minute per rebuild for a
+        # directory nothing can reach. Development runs Vite on the host
+        # instead, proxying /api to this service. See README.
+        WEB_STAGE: web-empty
     environment:
       NODE_ENV: development
     # Live reload against the mounted source. The anonymous volume keeps the

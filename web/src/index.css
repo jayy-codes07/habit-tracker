@@ -1,0 +1,246 @@
+@import "tailwindcss";
+
+/*
+ * A logbook, not a dashboard.
+ *
+ * The consistency grid is the artifact this product is built around; everything
+ * else is quiet scaffolding. Two voices: a sans for the machine's record, a
+ * serif for the user's own prose (journal, reflections, the date heading).
+ *
+ * Semantic colours are raw custom properties so a theme can swap them, and
+ * @theme inline makes Tailwind's utilities reference the var rather than bake
+ * the value in. Add a colour here, never a hex in a component.
+ */
+
+@theme inline {
+  --color-canvas: var(--c-canvas);
+  --color-surface: var(--c-surface);
+  --color-raised: var(--c-raised);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-ink: var(--c-ink);
+  --color-muted: var(--c-muted);
+  --color-faint: var(--c-faint);
+  --color-warn: var(--c-warn);
+
+  /* The API's five theme tokens. Applied as var(--color-{color_token}), so
+     there is no token-to-class map and nothing to keep in sync. */
+  --color-chart-1: var(--c-chart-1);
+  --color-chart-2: var(--c-chart-2);
+  --color-chart-3: var(--c-chart-3);
+  --color-chart-4: var(--c-chart-4);
+  --color-chart-5: var(--c-chart-5);
+
+  --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: Newsreader, Georgia, "Times New Roman", serif;
+
+  --text-micro: 0.6875rem; /* 11 - legend, cell labels */
+  --text-micro--line-height: 1rem;
+  --text-meta: 0.8125rem; /* 13 - secondary lines */
+  --text-meta--line-height: 1.125rem;
+  --text-base: 0.9375rem; /* 15 - interface default */
+  --text-base--line-height: 1.4rem;
+  --text-field: 1rem; /* 16 - every input, or iOS zooms on focus */
+  --text-field--line-height: 1.5rem;
+  --text-row: 1.125rem; /* 18 - a habit's name */
+  --text-row--line-height: 1.5rem;
+  --text-section: 1.375rem; /* 22 - section heads */
+  --text-section--line-height: 1.75rem;
+  --text-date: 2rem; /* 32 - the date, in the serif */
+  --text-date--line-height: 2.25rem;
+  --text-figure: 2.75rem; /* 44 - the one big number */
+  --text-figure--line-height: 3rem;
+}
+
+/*
+ * Dark-first: dark is the default and stays dark unless a theme is chosen.
+ * A light system preference does not flip it, because "dark-first" is a
+ * product decision rather than a guess at the room's lighting.
+ *
+ * Habit colours are separated in hue but never carry state — the grid's states
+ * are told by fill and shape, and a habit's name is always adjacent to its
+ * colour. That is what keeps the five legible to a colour-blind reader. Red is
+ * deliberately absent from the five so --c-warn cannot be mistaken for a habit.
+ */
+:root {
+  color-scheme: dark;
+
+  --c-canvas: #15151b;
+  --c-surface: #1d1d26;
+  --c-raised: #26262f;
+  --c-line: #2c2c38; /* row dividers: decoration, no contrast floor */
+  --c-line-strong: #66667a; /* 3.2:1 — control borders carry meaning (WCAG 1.4.11) */
+  --c-ink: #ecedf2;
+  --c-muted: #9c9cab; /* 6.5:1 on canvas */
+  --c-faint: #56566a; /* decoration only, never text */
+  --c-warn: #d3717c;
+
+  --c-chart-1: #7ea8e8;
+  --c-chart-2: #5fbfa8;
+  --c-chart-3: #b092e0;
+  --c-chart-4: #8fc176;
+  --c-chart-5: #d6b06a;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --c-canvas: #fbfbfd;
+  --c-surface: #ffffff;
+  --c-raised: #f1f1f5;
+  --c-line: #e3e3ea;
+  --c-line-strong: #8d8da0; /* 3.3:1, as above */
+  --c-ink: #1a1a22;
+  --c-muted: #5e5e70;
+  --c-faint: #a8a8b8;
+  --c-warn: #b03f4e;
+
+  --c-chart-1: #3d6fb8;
+  --c-chart-2: #1f8c74;
+  --c-chart-3: #7a56b5;
+  --c-chart-4: #4f8c38;
+  --c-chart-5: #94701e;
+}
+
+@layer base {
+  html {
+    /* dvh, not vh: a phone's address bar must not crop the tab bar. */
+    height: 100%;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100dvh;
+    background: var(--c-canvas);
+    color: var(--c-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: var(--text-base--line-height);
+    /* A tap highlight fires before we know whether it was a tap or a scroll.
+       Every interactive surface defines its own :active state instead. */
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Numbers that change in place — streaks, counts, percentages — must not
+     reflow the line around them. */
+  :where(time, output, .tabular) {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--c-ink);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background: var(--c-line-strong);
+    color: var(--c-ink);
+  }
+
+  /* The native date picker and textarea inherit nothing by default. */
+  :where(input, textarea, select, button) {
+    font: inherit;
+    color: inherit;
+  }
+
+  dialog::backdrop {
+    background: rgb(0 0 0 / 0.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * The one card in the product.
+ *
+ * A native <dialog> already does focus trapping, Escape, inertness and the
+ * backdrop, which is the entire reason no dialog library is installed here.
+ * Presentation is the only part left: a bottom sheet within thumb reach on a
+ * phone, a centred panel on a wider screen.
+ */
+.sheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 100%;
+  max-height: 88dvh;
+  border: 0;
+  border-top: 1px solid var(--c-line);
+  border-radius: 18px 18px 0 0;
+  background: var(--c-surface);
+  color: var(--c-ink);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-bottom: env(safe-area-inset-bottom);
+
+  opacity: 0;
+  translate: 0 100%;
+  transition:
+    opacity 180ms ease,
+    translate 180ms ease,
+    overlay 180ms allow-discrete,
+    display 180ms allow-discrete;
+}
+
+.sheet[open] {
+  opacity: 1;
+  translate: 0 0;
+}
+
+@starting-style {
+  .sheet[open] {
+    opacity: 0;
+    translate: 0 100%;
+  }
+}
+
+@media (min-width: 640px) {
+  .sheet {
+    inset: 0;
+    margin: auto;
+    width: min(29rem, calc(100% - 2rem));
+    height: max-content;
+    max-height: 84dvh;
+    border: 1px solid var(--c-line);
+    border-radius: 14px;
+    translate: 0 0;
+    scale: 0.98;
+    transition:
+      opacity 140ms ease,
+      scale 140ms ease,
+      overlay 140ms allow-discrete,
+      display 140ms allow-discrete;
+  }
+
+  .sheet[open] {
+    scale: 1;
+  }
+
+  @starting-style {
+    .sheet[open] {
+      opacity: 0;
+      scale: 0.98;
+    }
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

@@ -53,6 +53,47 @@ npm run lint          # also: lint:fix, format, format:check
 npm run format:check
 ```
 
+## Frontend
+
+The SPA lives in `web/` (React + TypeScript + Vite + Tailwind). It runs on the **host**,
+not in a container, and proxies `/api` to the Compose api service:
+
+```bash
+cd web && npm install        # once
+npm run dev                  # http://localhost:5173, /api proxied to :3000
+npm run typecheck            # also: lint, lint:fix, format, format:check
+```
+
+The api container cannot serve the SPA in development, and is not meant to. The dev override
+bind-mounts `server/` at `/app`, which shadows the image's `/app/web`, so `WEB_DIST_PATH`
+resolves to a directory that cannot exist and `mountSpa()` serves its plain-text placeholder.
+Vite on the host is the development frontend; the container is the API.
+
+The dev cookie works because the API sets it with no `Domain`, so it scopes to host
+`localhost` and cookies ignore the port. Through the proxy the browser sees one origin, which
+is what `SameSite=Lax` needs.
+
+Two things about the production path:
+
+- `web/package-lock.json` **must be committed** — the Dockerfile's `web-build` stage runs
+  `npm ci`, which fails without it. Leave `build.outDir` alone: Vite's default `dist` is
+  already `web/dist`, which is what `WEB_DIST_PATH` expects.
+- `mountSpa()` checks for `web/dist/index.html` **once, when the app is created**. Building
+  the SPA against a running server changes nothing until that process restarts.
+
+`docker-compose.yml` passes `WEB_STAGE=web-build`, so a production-shaped image carries the
+SPA; the dev override passes `web-empty`, because that container could not serve it anyway.
+
+```bash
+docker compose -f docker-compose.yml up --build   # production-shaped, SPA included
+```
+
+That stack sets `NODE_ENV=production`, which makes the session cookie `Secure` — so a browser
+will not store it over plain http and **you cannot log in there**. It is good for checking
+that the assets build and are served; sign-in has to be tested through the dev setup or
+behind real TLS.
+
+
 ## Time zone
 
 `APP_TIMEZONE` (an IANA name, default `UTC`) decides what day it currently is. A habit is done on a
@@ -117,6 +158,20 @@ server/
   scripts/              operational scripts (hash-password)
   tests/
     helpers/            test database setup, rollback wrapper, fixtures
+
+web/
+  src/
+    main.tsx            entry: QueryClient, the global 401 handler, router
+    index.css           design tokens, both themes, the sheet
+    App.tsx             session gate and routes
+    api.ts              fetch wrapper, ApiError, one function per endpoint
+    types.ts            the API's payloads, by hand
+    queries.ts          query keys, hooks, invalidation
+    dates.ts            "YYYY-MM-DD" arithmetic, mirroring lib/dates.js
+    verdict.ts          nine verdicts -> what a person reads
+    ui.tsx              Dialog (native <dialog>), ErrorBox, Skeleton
+    habit-dialogs.tsx   schedule picker, new habit, the per-habit sheet
+    routes/             Day.tsx, Login.tsx
 ```
 
 A feature owns its routes, controller and service in one folder. Adding a feature

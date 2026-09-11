@@ -5,11 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 Single-user, phone-first habit/task/journal tracker. Express 5 + Postgres 16 API in `server/`,
-ESM only (`"type": "module"`), Node 20+. The React SPA (`web/`) does not exist yet — the server,
-Dockerfile and config are already wired for it and stay inert until it does.
+ESM only (`"type": "module"`), Node 20+. The SPA is in `web/` — React 19 + TypeScript + Vite +
+Tailwind v4, its own npm project with its own lockfile. No workspaces, no root package.json.
 
-Built in numbered steps; steps 1-4 (foundation, schema, auth, the feature API) are committed.
-Every route the SPA needs exists. A new feature router mounts in
+Built in numbered steps; steps 1-4 (foundation, schema, auth, the feature API) are committed, and
+step 5 is the SPA. A new feature router mounts in
 [server/src/routes/index.js](server/src/routes/index.js), below the auth boundary.
 
 ## Commands
@@ -33,6 +33,13 @@ above:
 
 ```bash
 cd server && npm run lint       # also: lint:fix, format, format:check
+```
+
+The frontend runs on the host too — always. `npm run dev` serves it on :5173 and proxies `/api` to
+the api container on :3000:
+
+```bash
+cd web && npm run dev           # also: typecheck, lint, lint:fix, format, format:check
 ```
 
 The api image is built from the `runtime` stage, whose deps stage runs `npm ci --omit=dev`, and the
@@ -277,10 +284,77 @@ only outside production). A `ZodError` becomes a 400 carrying `path` and `messag
 ### One origin, and the SPA
 
 `mountSpa()` in [src/app.js](server/src/app.js) serves `web/dist` and returns the shell for any
-non-API path; until that build exists it serves a plain-text placeholder. The Docker build context
-is the **repository root**, not `server/`, so the runtime image can carry the SPA. Once `web/`
-exists, build with `--build-arg WEB_STAGE=web-build`; the default `web-empty` stage keeps the
-missing directory out of the build graph.
+non-API path. The Docker build context is the **repository root**, not `server/`, so the runtime
+image can carry the SPA, and `docker-compose.yml` passes `WEB_STAGE=web-build` to select the stage
+that builds it. Three consequences that have all bitten already:
+
+- **The development container cannot serve the SPA, by design.** The override bind-mounts
+  `server/` at `/app`, which shadows the image's `/app/web`, so `WEB_DIST_PATH` can never resolve
+  and the placeholder is what you get. The override therefore passes `WEB_STAGE=web-empty` — there
+  is no point spending a minute per rebuild on a directory nothing can reach. Vite on the host is
+  the development frontend.
+- **`mountSpa()` runs its `existsSync` once, inside `createApp()`.** Building `web/dist` against a
+  running server changes nothing until the process restarts.
+- **`web/package-lock.json` must stay committed.** The `web-build` stage runs `npm ci`.
+
+Helmet's default CSP (`script-src 'self'`, `font-src 'self'`, `style-src … 'unsafe-inline'`) needs
+no modification: Vite emits no inline `<script>`, the fonts are self-hosted, and React's inline
+`style` attributes are covered. Do not add a CDN — `connect-src` falls back to `'self'` too.
+
+### The SPA
+
+Phone-first, and deliberately small: no component library, no state manager. Native elements do
+the work a library would otherwise be installed for — `<dialog showModal>` for the sheet (focus
+trap, Escape, backdrop, inert background), `<input type="date">`, and sr-only radios and checkboxes
+behind styled labels so grouping and arrow-key navigation come from the platform.
+
+`web/src` is laid out by domain, mirroring `server/src/modules/` so both halves of the app are
+read with one map:
+
+- `features/<name>/` — one folder per domain (`auth`, `habits`, `tasks`, `journal`, `overview`),
+  each owning its `api.ts` (endpoints), `queries.ts` (TanStack hooks) and whatever domain logic and
+  domain UI it has. `habits/` owns **schedules and logs too**, as the server's module does, which
+  is why `useSetLog` lives there and not under `overview/`. `overview/` owns the composed screen
+  reads — `/day` now, `/grid` and `/review` next — and no tables.
+- `routes/` — one file per URL. Route components compose features; features never import routes.
+- `components/` — domain-free UI only (`Dialog`, `Choice`, `ErrorBox`, `Skeleton`, `icons`, and
+  `form.ts`, the shared control classes). Anything that knows what a habit is belongs in `features/`.
+- `lib/` — `api-client.ts` (the transport: `request`, `ApiError`; endpoints live with their
+  feature), `dates.ts` and `invalidate.ts`.
+- `types.ts` stays a single shared file at the root: it is the API's vocabulary, one payload
+  references another, and splitting it per feature would only buy cross-imports. `index.css` is
+  the single stylesheet, next to `main.tsx` that imports it.
+
+**Today is not a screen.** It is `/day/:date` with the date set to today. Logging this morning and
+fixing last Tuesday are the same job, so they are the same component — which is also why
+`GET /api/day/:date` returns `today`: the client never consults its own clock, because the day
+rolls over in `APP_TIMEZONE` and the browser may be somewhere else. `/` renders the browser's
+date, then redirects to `data.today` if the server disagrees.
+
+Three payload traps, all handled in
+[web/src/features/habits/verdict.ts](web/src/features/habits/verdict.ts) and documented there:
+
+- **`scheduled` is true only for a fixed habit.** Weekly *and paused* habits report `false`, so
+  `isActionable()` exists — grouping the day's list by `scheduled` would hide every weekly habit,
+  every day.
+- **`schedule_kind` means two things.** On `/habits` it is the stored kind (`fixed|weekly|paused`);
+  on `/day`, `/grid` and `/review` it is `effectiveKind()`, which skips paused versions and can
+  only be `fixed|weekly`. Hence `ScheduleKind` and `EffectiveKind` in `types.ts`.
+- **`done` and `done_of` do not pair up** (see the review payload). `done_of` is never rendered.
+
+**Optimistic updates patch `status` only.** `verdict` and `streak` cannot be computed honestly on
+the client — a streak needs history the client does not hold, and a paused day is indistinguishable
+from an unscheduled one in the payload — so they are left to correct themselves on settle, and the
+row's appearance is driven by `status`. There is no `localVerdict()` mirror, on purpose.
+
+Invalidation is blunt and should stay that way: a log written last March can change today's streak,
+this month's review and a grid cell a year back, so log mutations invalidate `["day"]`, `["grid"]`
+and `["review"]` by prefix and everything else calls `invalidateAll`. Prefix invalidation is free —
+TanStack only refetches queries that are mounted.
+
+Colour tokens are applied as `var(--c-${habit.color_token})`, not through a token-to-class map.
+Note the `--c-` prefix: `@theme inline` in `index.css` does not emit `--color-*` custom properties,
+it inlines them into the utilities it generates, so `var(--color-chart-1)` resolves to nothing.
 
 ## Conventions
 

@@ -1,0 +1,170 @@
+/**
+ * The API's payloads, by hand.
+ *
+ * Written against server/src/modules/**, not generated: there is no OpenAPI
+ * document to generate from, and the shapes are stable. Two distinctions here
+ * are load-bearing and easy to lose:
+ *
+ *   - Ids are bigint in Postgres and arrive as STRINGS. Never Number() one.
+ *   - `schedule_kind` means two different things depending on where it appears.
+ *     See ScheduleKind and EffectiveKind below.
+ */
+
+/** A habit, task or journal id. Always a string — see the note above. */
+export type Id = string;
+/** A calendar day, "YYYY-MM-DD". These compare correctly with < and <=. */
+export type IsoDate = string;
+/** "YYYY-MM". */
+export type IsoMonth = string;
+
+/** habits.color_token — a theme token, never a hex value. */
+export type ColorToken = "chart-1" | "chart-2" | "chart-3" | "chart-4" | "chart-5";
+
+/**
+ * What a schedule version stores. Pausing is a schedule, not a separate
+ * mechanism, which is why a break reads as absence rather than failure.
+ */
+export type ScheduleKind = "fixed" | "weekly" | "paused";
+
+/**
+ * What the read models (/day, /grid, /review) report. effectiveKind() skips
+ * paused versions deliberately, so "paused" can never appear here — a paused
+ * habit still reports the kind it will resume as.
+ */
+export type EffectiveKind = "fixed" | "weekly";
+
+/** The three things a person can claim about a day. No row at all is a fourth. */
+export type LogStatus = "done" | "missed" | "skipped";
+
+/** Every state one day can be in for one habit. See lib/scheduling.js. */
+export type Verdict =
+  | "inactive"
+  | "paused"
+  | "unscheduled"
+  | "bonus"
+  | "done"
+  | "skipped"
+  | "missed"
+  | "unlogged"
+  | "future";
+
+/** ISO-8601 weekday: 1 = Monday ... 7 = Sunday, matching Postgres ISODOW. */
+export type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+export interface Schedule {
+  effective_from: IsoDate;
+  schedule_kind: ScheduleKind;
+  /** Set only when schedule_kind is "fixed". */
+  schedule_days: Weekday[] | null;
+  /** Set only when schedule_kind is "weekly". */
+  weekly_target: number | null;
+}
+
+/** The schedule half of a create or change request. */
+export type ScheduleInput =
+  | { schedule_kind: "fixed"; schedule_days: Weekday[] }
+  | { schedule_kind: "weekly"; weekly_target: number }
+  | { schedule_kind: "paused" };
+
+/** GET /api/habits — `schedule` is resolved as of today, not a version history. */
+export interface Habit {
+  id: Id;
+  name: string;
+  color_token: ColorToken;
+  sort_order: number;
+  start_date: IsoDate;
+  archived_on: IsoDate | null;
+  schedule: Schedule | null;
+}
+
+export interface Task {
+  id: Id;
+  title: string;
+  due_date: IsoDate | null;
+  completed: boolean;
+  completed_at: string | null;
+  created_at: string;
+  archived_at: string | null;
+}
+
+export interface JournalEntry {
+  date: IsoDate;
+  kind: "day" | "month";
+  entry: string;
+  updated_at: string;
+}
+
+/** Progress toward a weekly habit's target. null when the week is not scored. */
+export interface WeekProgress {
+  done: number;
+  target: number;
+  met: boolean;
+}
+
+export interface DayHabit {
+  id: Id;
+  name: string;
+  color_token: ColorToken;
+  schedule_kind: EffectiveKind;
+  /**
+   * TRAP: true only for a fixed habit whose weekday is named today. A weekly
+   * habit — and a paused one — always reports false. Anything that decides
+   * "is this actionable today" from this field alone hides every weekly habit,
+   * every day. Use isActionable() in features/habits/verdict.ts.
+   */
+  scheduled: boolean;
+  status: LogStatus | null;
+  note: string | null;
+  verdict: Verdict;
+  /** As it stood at the end of the day being viewed, not necessarily today. */
+  streak: number;
+  week: WeekProgress | null;
+}
+
+export interface DayPayload {
+  date: IsoDate;
+  /** The server's today, in APP_TIMEZONE. Never use the browser's clock. */
+  today: IsoDate;
+  habits: DayHabit[];
+  /** Only tasks WITH a due date appear here. */
+  tasks: { due: Task[]; overdue: Task[] };
+  journal: JournalEntry | null;
+}
+
+export interface Session {
+  authenticated: true;
+  expiresAt: string;
+}
+
+/** One week column of a weekly habit's grid row. `target` is null when the week was never scored. */
+export interface GridWeek {
+  start: IsoDate;
+  done: number;
+  target: number | null;
+  met: boolean;
+}
+
+export interface GridHabit {
+  id: Id;
+  name: string;
+  color_token: ColorToken;
+  schedule_kind: EffectiveKind;
+  /**
+   * `weeks * 7` characters, one per day from `start`, Monday first. A day is a
+   * character rather than an object because a year row is then 364 bytes and
+   * not 364 objects — decode it with CELL in features/habits/verdict.ts.
+   */
+  cells: string;
+  /** One entry per week column — weekly habits only, null for a fixed one. */
+  weeks: GridWeek[] | null;
+}
+
+/** GET /api/grid — always whole Monday-to-Sunday weeks, so cells index by offset. */
+export interface GridPayload {
+  start: IsoDate;
+  end: IsoDate;
+  weeks: number;
+  /** The server's today, in APP_TIMEZONE. Never use the browser's clock. */
+  today: IsoDate;
+  habits: GridHabit[];
+}

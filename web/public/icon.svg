@@ -1,0 +1,13 @@
+<!-- The product's own "done" mark: the same rounded square and check the habit
+     rows use, so the tab icon is the thing the app is for. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="8" fill="#5fbfa8" />
+  <path
+    d="M9 16.8 13.6 21.4 23 11"
+    fill="none"
+    stroke="#15151b"
+    stroke-width="4"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
