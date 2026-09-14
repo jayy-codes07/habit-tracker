@@ -8,6 +8,9 @@ web/dist/
 dist/
 build/
 
+# TypeScript's incremental build cache, rewritten by every `tsc -b`
+*.tsbuildinfo
+
 # Logs
 *.log
 npm-debug.log*

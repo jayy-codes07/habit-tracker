@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import * as api from "./api";
-import type { IsoDate } from "../../types";
+import type { IsoDate, IsoMonth } from "../../types";
 
 /**
  * placeholderData keeps the previous day on screen while the next one loads,
@@ -23,5 +23,13 @@ export const useGrid = (weeks: number) =>
   useQuery({
     queryKey: ["grid", weeks],
     queryFn: () => api.getGrid(weeks),
+    placeholderData: keepPreviousData,
+  });
+
+/** Stepping months keeps the previous one on screen, as stepping days does. */
+export const useReview = (month: IsoMonth) =>
+  useQuery({
+    queryKey: ["review", month],
+    queryFn: () => api.getReview(month),
     placeholderData: keepPreviousData,
   });

@@ -19,6 +19,12 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
     },
   },
+  // Build-time scripts run in Node, not the browser: Buffer and console are
+  // theirs, and none of the React rules apply.
+  {
+    files: ["scripts/**/*.{js,mjs}"],
+    languageOptions: { globals: globals.node },
+  },
   // Stays last, as in server/eslint.config.js.
   prettier,
 );

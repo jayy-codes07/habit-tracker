@@ -8,7 +8,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import * as api from "./api";
 import { invalidateAll, invalidateScored } from "../../lib/invalidate";
-import type { DayHabit, DayPayload, Id, IsoDate, LogStatus, ScheduleInput } from "../../types";
+import type {
+  DayHabit,
+  DayPayload,
+  Habit,
+  Id,
+  IsoDate,
+  LogStatus,
+  ScheduleInput,
+} from "../../types";
 
 export const useHabits = (includeArchived = false) =>
   useQuery({
@@ -44,6 +52,59 @@ export function useSetSchedule() {
   return useMutation({
     mutationFn: ({ id, schedule }: { id: Id; schedule: ScheduleInput }) =>
       api.setSchedule(id, schedule),
+    onSuccess: () => invalidateAll(client),
+  });
+}
+
+/**
+ * Reordering is the one habit write that is optimistic, for the same reason the
+ * log toggle is: it happens in the list itself, one tap at a time, and a row
+ * that waits for a round trip before it moves invites a second tap on the
+ * arrow — which would then race the first.
+ *
+ * `includeArchived` is the key of the list being reordered, so the screen that
+ * shows archived habits patches the cache it is actually reading.
+ */
+export function useReorderHabits(includeArchived = false) {
+  const client = useQueryClient();
+  const key = ["habits", includeArchived];
+
+  return useMutation({
+    mutationFn: api.reorderHabits,
+
+    onMutate: async (ids: Id[]) => {
+      await client.cancelQueries({ queryKey: key });
+      const previous = client.getQueryData<{ habits: Habit[] }>(key);
+      const position = new Map(ids.map((id, index) => [id, index]));
+
+      // Archived habits are not in the order and are listed separately, so
+      // where they land in this array does not matter.
+      client.setQueryData<{ habits: Habit[] }>(key, (old) =>
+        old
+          ? {
+              habits: [...old.habits].sort(
+                (a, b) => (position.get(a.id) ?? Infinity) - (position.get(b.id) ?? Infinity),
+              ),
+            }
+          : old,
+      );
+
+      return { previous };
+    },
+
+    onError: (_error, _ids, context) => {
+      if (context?.previous) client.setQueryData(key, context.previous);
+    },
+
+    onSettled: () => invalidateAll(client),
+  });
+}
+
+/** 409 when the habit has logged history; the screen offers archiving instead. */
+export function useDeleteHabit() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: api.deleteHabit,
     onSuccess: () => invalidateAll(client),
   });
 }

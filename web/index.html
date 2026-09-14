@@ -4,8 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
+    <!-- The dark canvas, so the phone's status bar and the page are one surface.
+         lib/theme.ts rewrites this when the theme is switched; it cannot be a
+         media query, because the theme is a stored choice and not the room's
+         lighting. -->
     <meta name="theme-color" content="#15151b" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <!-- iOS ignores SVG here and falls back to a screenshot of the page. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Safari only honoured the manifest's display mode from iOS 16.4; this is
+         what gets an older iPhone to open the home-screen icon without browser
+         chrome. The status bar is left opaque, so nothing overlaps the tabs. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Habits" />
     <meta name="description" content="A personal habit, task and journal tracker." />
     <title>Habit Tracker</title>
   </head>

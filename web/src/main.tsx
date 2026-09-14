@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 
 import { ApiError } from "./lib/api-client";
+import { applyTheme, readTheme } from "./lib/theme";
 import App from "./App";
 
 const is401 = (error: unknown) => error instanceof ApiError && error.status === 401;
@@ -44,6 +45,11 @@ const client: QueryClient = new QueryClient({
     },
   },
 });
+
+// Before the first render, so a remembered light theme does not flash dark.
+// It cannot go any earlier: Helmet's CSP is script-src 'self', so index.html
+// carries no inline script and ships the dark default instead.
+applyTheme(readTheme());
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -134,14 +134,24 @@ function Legend({ habits }: { habits: GridHabit[] }) {
  * they were done — the day simply was not asked for, which the grid already
  * shows by drawing them lighter.
  */
-function summaryLine(habit: GridHabit): string {
+function summaryLine(habit: GridHabit, today: IsoDate): string {
   const counts = tally(habit.cells);
   const parts: string[] = [];
 
   if (habit.weeks) {
-    const scored = habit.weeks.filter((week) => week.target !== null);
-    if (scored.length > 0) {
-      parts.push(`${scored.filter((week) => week.met).length} of ${scored.length} weeks met`);
+    /*
+     * A week that has not been fully lived is provisional: it can be satisfied,
+     * but it can never fail. The payload reports met=false for the week that
+     * started this morning exactly as it does for one that genuinely fell
+     * short, so counting every week would report today's week as a miss before
+     * it has happened — and quietly deflate the ratio every Monday.
+     */
+    const decided = habit.weeks.filter(
+      (week) => week.target !== null && (week.met || addDays(week.start, 6) < today),
+    );
+    if (decided.length > 0) {
+      const met = decided.filter((week) => week.met).length;
+      parts.push(`${met} of ${decided.length} week${decided.length === 1 ? "" : "s"} met`);
     }
   }
 
@@ -202,7 +212,7 @@ function HabitBlock({
           />
           {habit.name}
         </h2>
-        <p className="text-meta text-muted tabular">{summaryLine(habit)}</p>
+        <p className="text-meta text-muted tabular">{summaryLine(habit, today)}</p>
       </header>
 
       {/* Columns shrink to fit the screen and stop at 10px; past that this

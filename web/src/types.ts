@@ -168,3 +168,45 @@ export interface GridPayload {
   today: IsoDate;
   habits: GridHabit[];
 }
+
+/**
+ * One habit's month. The six tallies are verdict counts over the month's days;
+ * `consistency` is the server's own rate and the only scored value here.
+ */
+export interface ReviewHabit {
+  id: Id;
+  name: string;
+  color_token: ColorToken;
+  schedule_kind: EffectiveKind;
+  done: number;
+  missed: number;
+  skipped: number;
+  unlogged: number;
+  paused: number;
+  bonus: number;
+  /**
+   * 0..1, or null when nothing was ever asked — which is not the same as
+   * nothing being done, so it must never render as 0%.
+   */
+  consistency: number | null;
+  /**
+   * TRAP: the denominator `consistency` was computed against, NOT the partner
+   * of `done`. A weekly habit reports done=4 alongside done_of=3. Never render
+   * it, and never pair the two into "4 of 3".
+   */
+  done_of: number;
+  /** Both streaks are measured to today, not to the end of the month shown. */
+  current_streak: number;
+  longest_streak: number;
+}
+
+/** GET /api/review/:month */
+export interface ReviewPayload {
+  month: IsoMonth;
+  start: IsoDate;
+  end: IsoDate;
+  habits: ReviewHabit[];
+  tasks: { completed: number; created: number };
+  /** `month` is the reflection anchored to the 1st; `days` are that month's day notes. */
+  journal: { month: JournalEntry | null; days: JournalEntry[] };
+}

@@ -163,19 +163,26 @@ web/
   src/
     main.tsx            entry: QueryClient, the global 401 handler, router
     index.css           design tokens, both themes, the sheet
-    App.tsx             session gate and routes
-    api.ts              fetch wrapper, ApiError, one function per endpoint
+    App.tsx             session gate, routes, the tab bar
     types.ts            the API's payloads, by hand
-    queries.ts          query keys, hooks, invalidation
-    dates.ts            "YYYY-MM-DD" arithmetic, mirroring lib/dates.js
-    verdict.ts          nine verdicts -> what a person reads
-    ui.tsx              Dialog (native <dialog>), ErrorBox, Skeleton
-    habit-dialogs.tsx   schedule picker, new habit, the per-habit sheet
-    routes/             Day.tsx, Login.tsx
+    features/           one folder per domain, mirroring server/src/modules/
+      auth/             api | queries
+      habits/           api | queries | schedule | verdict, and the habit dialogs
+      tasks/            api | queries
+      journal/          api | queries — day notes and the monthly reflection
+      overview/         api | queries for /day, /grid and /review; owns no tables
+    routes/             one file per URL: Day, Grid, Review, Login
+    components/         domain-free UI: Dialog, Choice, ErrorBox, Skeleton,
+                        icons, form.ts (the shared control classes)
+    lib/                api-client.ts (transport), dates.ts, invalidate.ts
 ```
 
 A feature owns its routes, controller and service in one folder. Adding a feature
 means adding a folder and one line in `src/routes/index.js`.
+
+The SPA mirrors that split: a feature owns its `api.ts`, `queries.ts` and its own
+domain UI, `routes/` compose features, and features never import routes. `habits/`
+owns schedules and logs too, exactly as the server module does.
 
 ## Database
 

@@ -1,19 +1,12 @@
 import { useState, type FormEvent } from "react";
 
 import { Dialog } from "../../components/Dialog";
-import { FIELD, PRIMARY, QUIET, RING } from "../../components/form";
+import { FIELD, PRIMARY, QUIET } from "../../components/form";
+import { ColorPicker } from "./ColorPicker";
 import { SchedulePicker } from "./SchedulePicker";
 import { EVERY_DAY, isDraftValid, toScheduleInput, type ScheduleDraft } from "./schedule";
 import { useCreateHabit } from "./queries";
 import type { ColorToken } from "../../types";
-
-const COLORS: { token: ColorToken; name: string }[] = [
-  { token: "chart-1", name: "Blue" },
-  { token: "chart-2", name: "Teal" },
-  { token: "chart-3", name: "Violet" },
-  { token: "chart-4", name: "Green" },
-  { token: "chart-5", name: "Sand" },
-];
 
 export function NewHabitDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [name, setName] = useState("");
@@ -59,37 +52,7 @@ export function NewHabitDialog({ open, onClose }: { open: boolean; onClose: () =
           />
         </div>
 
-        <fieldset>
-          <legend className="text-meta text-muted pb-1.5">Colour</legend>
-          <div className="flex gap-2">
-            {COLORS.map(({ token, name: colorName }) => (
-              <label
-                key={token}
-                className={`grid h-11 w-11 cursor-pointer place-items-center rounded-full ${RING}`}
-              >
-                <input
-                  type="radio"
-                  name="habit-color"
-                  checked={color === token}
-                  onChange={() => setColor(token)}
-                  aria-label={colorName}
-                  className="sr-only"
-                />
-                <span
-                  aria-hidden="true"
-                  className="h-6 w-6 rounded-full transition-shadow"
-                  style={{
-                    background: `var(--c-${token})`,
-                    boxShadow:
-                      color === token
-                        ? "0 0 0 2px var(--c-canvas), 0 0 0 4px var(--c-ink)"
-                        : "none",
-                  }}
-                />
-              </label>
-            ))}
-          </div>
-        </fieldset>
+        <ColorPicker value={color} onChange={setColor} />
 
         <SchedulePicker draft={draft} onChange={setDraft} />
 

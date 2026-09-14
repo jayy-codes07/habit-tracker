@@ -41,3 +41,14 @@ export const setLog = (habitId: Id, date: IsoDate, status: LogStatus, note?: str
 
 export const clearLog = (habitId: Id, date: IsoDate) =>
   send("DELETE", `/habits/${habitId}/logs/${date}`);
+
+/**
+ * Rewrites display order. The server rejects anything that is not every active
+ * habit exactly once, so this always sends the whole active list — archived
+ * habits have no place in the order and must not appear here.
+ */
+export const reorderHabits = (ids: Id[]) =>
+  sendJson<{ habits: Habit[] }>("PUT", "/habits/order", { ids });
+
+/** 204, or 409 when the habit has logged history — archive that one instead. */
+export const deleteHabit = (id: Id) => send("DELETE", `/habits/${id}`);

@@ -10,7 +10,7 @@
  * What "today" is never comes from here — it comes from the server, on every
  * /day and /grid payload, because the day rolls over in APP_TIMEZONE.
  */
-import type { IsoDate } from "../types";
+import type { IsoDate, IsoMonth } from "../types";
 
 const at = (iso: IsoDate) => new Date(`${iso}T12:00:00Z`);
 
@@ -61,3 +61,17 @@ export const daysBetween = (from: IsoDate, to: IsoDate): number =>
 
 /** "Sep" — the grid's column labels, where a month begins. */
 export const formatMonthShort = (iso: IsoDate) => format(iso, { month: "short" });
+
+/** Step whole months on a "YYYY-MM". Arithmetic on the index, so December wraps. */
+export function addMonths(month: IsoMonth, delta: number): IsoMonth {
+  const [year, index] = month.split("-").map(Number);
+  const total = year! * 12 + (index! - 1) + delta;
+  return `${String(Math.floor(total / 12)).padStart(4, "0")}-${String((total % 12) + 1).padStart(2, "0")}`;
+}
+
+/** "September 2026" — the review's heading. */
+export const formatMonthLong = (month: IsoMonth) =>
+  format(`${month}-01`, { month: "long", year: "numeric" });
+
+/** The month a date falls in. */
+export const monthOf = (iso: IsoDate): IsoMonth => iso.slice(0, 7);
