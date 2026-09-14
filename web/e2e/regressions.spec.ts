@@ -142,6 +142,9 @@ async function openSheet(page: Page, name: string) {
 test("signing in and out moves the app, with no reload", async ({ page }) => {
   await signIn(page);
 
+  // Sign out lives in Settings, at the foot of Habits, rather than in the tab
+  // row — so getting to it is part of what this test covers.
+  await page.getByRole("link", { name: "Habits" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(
     page.getByRole("button", { name: "Sign in" }),

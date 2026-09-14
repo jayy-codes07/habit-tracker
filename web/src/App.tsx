@@ -1,7 +1,7 @@
 import { Link, Navigate, Route, Routes, useLocation } from "react-router";
 
 import { ErrorBox } from "./components/ErrorBox";
-import { useLogout, useSession } from "./features/auth/queries";
+import { useSession } from "./features/auth/queries";
 import { ApiError } from "./lib/api-client";
 import Day from "./routes/Day";
 import Grid from "./routes/Grid";
@@ -81,13 +81,15 @@ const Unreachable = ({ error, onRetry }: { error: unknown; onRetry: () => void }
  * Habits and Tasks sit last because you visit them to decide something rather
  * than to look at something; the three reading screens stay together.
  *
- * Five words plus "Sign out" is close to the width of a small phone, so the row
- * scrolls rather than wraps or squeezes — at any width that fits, nothing moves
- * and there is nothing to see.
+ * Five words and nothing else. "Sign out" used to sit at the end of this row,
+ * where it took a seventh of a 360px phone to offer the one thing you do here
+ * least often, and pushed the five tabs into a scroller to do it. It lives in
+ * Settings now, next to the theme and the export — the other three things that
+ * are about the account rather than about a day. The row still scrolls rather
+ * than wrapping if it ever has to, but at any width that fits, nothing moves.
  */
 function Tabs() {
   const { pathname } = useLocation();
-  const logout = useLogout();
   const onGrid = pathname.startsWith("/grid");
   const onReview = pathname.startsWith("/review");
   const onHabits = pathname.startsWith("/habits");
@@ -116,13 +118,6 @@ function Tabs() {
         <Tab to="/tasks" active={onTasks}>
           Tasks
         </Tab>
-        <button
-          type="button"
-          onClick={() => logout.mutate()}
-          className="text-meta text-muted hover:text-ink ml-auto min-h-11 shrink-0 px-2 transition-colors"
-        >
-          Sign out
-        </button>
       </div>
     </nav>
   );

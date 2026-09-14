@@ -21,6 +21,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
 import { ErrorBox } from "../components/ErrorBox";
+import { ICON_BUTTON } from "../components/form";
 import { Chevron } from "../components/icons";
 import { Skeleton } from "../components/Skeleton";
 import { useSaveMonthJournal } from "../features/journal/queries";
@@ -34,9 +35,6 @@ import {
   monthOf,
 } from "../lib/dates";
 import type { IsoDate, IsoMonth, JournalEntry, ReviewHabit } from "../types";
-
-const ICON_BUTTON =
-  "border-line-strong hover:bg-raised text-ink grid h-11 w-11 place-items-center rounded-lg border transition-colors disabled:opacity-30 disabled:hover:bg-transparent";
 
 /**
  * A rate as a whole number, without ever flattering it. 0.996 is not a perfect

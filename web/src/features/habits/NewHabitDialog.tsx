@@ -3,21 +3,46 @@ import { useState, type FormEvent } from "react";
 import { Dialog } from "../../components/Dialog";
 import { FIELD, PRIMARY, QUIET } from "../../components/form";
 import { ColorPicker } from "./ColorPicker";
+import { leastUsedColor } from "./colors";
 import { SchedulePicker } from "./SchedulePicker";
 import { EVERY_DAY, isDraftValid, toScheduleInput, type ScheduleDraft } from "./schedule";
 import { useCreateHabit } from "./queries";
 import type { ColorToken } from "../../types";
 
-export function NewHabitDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function NewHabitDialog({
+  open,
+  onClose,
+  taken = [],
+}: {
+  open: boolean;
+  onClose: () => void;
+  /**
+   * The colours already in use by the habits the caller has on screen. Passed
+   * in rather than fetched: both callers are already holding a list of habits,
+   * and this dialog stays mounted while closed, so a query here would be a
+   * request every visit for a suggestion nobody has asked for yet.
+   */
+  taken?: ColorToken[];
+}) {
   const [name, setName] = useState("");
-  const [color, setColor] = useState<ColorToken>("chart-1");
+  const [chosen, setChosen] = useState<ColorToken | null>(null);
   const [draft, setDraft] = useState<ScheduleDraft>({ kind: "fixed", days: EVERY_DAY });
   const create = useCreateHabit();
+
+  /*
+   * "Nothing chosen yet" is a state of its own, so the suggestion is derived at
+   * render rather than copied into state when the dialog opens. Copying it
+   * would have to be an effect — this dialog outlives any one use of it, and
+   * the habit added last time changes what the least-used colour now is — and
+   * an effect that calls setColor renders twice and fights whatever the person
+   * clicked. Clearing `chosen` on close is all "reset for next time" needs.
+   */
+  const color = chosen ?? leastUsedColor(taken);
 
   const close = () => {
     create.reset();
     setName("");
-    setColor("chart-1");
+    setChosen(null);
     setDraft({ kind: "fixed", days: EVERY_DAY });
     onClose();
   };
@@ -52,7 +77,7 @@ export function NewHabitDialog({ open, onClose }: { open: boolean; onClose: () =
           />
         </div>
 
-        <ColorPicker value={color} onChange={setColor} />
+        <ColorPicker value={color} onChange={setChosen} />
 
         <SchedulePicker draft={draft} onChange={setDraft} />
 

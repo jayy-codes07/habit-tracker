@@ -10,6 +10,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import { ErrorBox } from "../components/ErrorBox";
+import { ICON_BUTTON } from "../components/form";
 import { Check, Chevron, Cross, Dash, Ellipsis } from "../components/icons";
 import { Skeleton } from "../components/Skeleton";
 import { HabitSheet } from "../features/habits/HabitSheet";
@@ -28,9 +29,6 @@ import { useDay } from "../features/overview/queries";
 import { useCreateTask, usePatchTask } from "../features/tasks/queries";
 import { addDays, browserToday, daysBetween, formatDateLong, relativeDay } from "../lib/dates";
 import type { ColorToken, DayHabit, IsoDate, JournalEntry, Task } from "../types";
-
-const ICON_BUTTON =
-  "border-line-strong hover:bg-raised text-ink grid h-11 w-11 place-items-center rounded-lg border transition-colors disabled:opacity-30 disabled:hover:bg-transparent";
 
 /**
  * The state of one habit on one day, as fill and shape rather than colour alone
@@ -328,7 +326,16 @@ function TaskRow({
             // than a fact, so it is stated without the warning colour.
             className={`text-meta tabular shrink-0 ${future ? "text-muted" : "text-warn"}`}
           >
-            {late === 1 ? "yesterday" : `${late} days ago`}
+            {/* And in the tense that goes with it. "3 days ago" is measured
+                from the day on screen, so on a day still to come it dates the
+                task from a future vantage point and reads as something that
+                already happened. How late it will be by then is the same
+                number, said forwards. */}
+            {future
+              ? `${late} ${late === 1 ? "day" : "days"} late`
+              : late === 1
+                ? "yesterday"
+                : `${late} days ago`}
           </span>
         )}
       </label>
@@ -521,13 +528,38 @@ export default function Day() {
       {/* Capped to the main column so the day steppers stay next to the
           date instead of drifting to the far edge of a wide screen. */}
       <header className="pt-5 pb-7 sm:pt-8 lg:max-w-[46rem]">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <p className="text-meta text-muted">
             {/* The server decides which day is today, so say nothing until it has. */}
             {today ? (relative ?? (readOnly ? "Coming up" : "Looking back")) : ""}
           </p>
 
           <nav aria-label="Change day" className="flex shrink-0 items-center gap-1.5">
+            {/*
+             * The only way to an arbitrary day that does not involve pressing
+             * "Previous day" once per day between here and there. The grid's
+             * squares look like the answer but are not one: that grid is
+             * aria-hidden and its cells are a click handler on a div, so a
+             * keyboard or a screen reader could reach no day but this one.
+             *
+             * <input type="date"> rather than a calendar of our own, for the
+             * reason the sheet is a <dialog>: the platform ships a picker that
+             * is already localised, already keyboard-operable and already the
+             * one the phone's owner knows.
+             *
+             * It is deliberately not capped at today. The steppers stay bounded
+             * to days that have been lived — "Next day" stops at today, and
+             * walking into next year one tap at a time is not navigation — but
+             * a day you name outright is a destination, and the screen renders
+             * one that has not arrived read-only and says "Coming up".
+             */}
+            <input
+              type="date"
+              value={date}
+              aria-label="Go to date"
+              onChange={(event) => event.target.value && navigate(`/day/${event.target.value}`)}
+              className="border-line-strong bg-canvas text-meta tabular focus:border-ink h-11 rounded-lg border px-2 outline-none"
+            />
             {!isToday && today && (
               <button
                 type="button"
@@ -608,7 +640,11 @@ export default function Day() {
         </p>
       </footer>
 
-      <NewHabitDialog open={newHabit} onClose={() => setNewHabit(false)} />
+      <NewHabitDialog
+        open={newHabit}
+        onClose={() => setNewHabit(false)}
+        taken={(data?.habits ?? []).map((habit) => habit.color_token)}
+      />
     </div>
   );
 }

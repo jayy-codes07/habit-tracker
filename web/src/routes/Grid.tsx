@@ -12,7 +12,7 @@
  * Consistency is a real calculation with real rules — skipped days leave the
  * denominator, paused days never enter it — and it belongs to /review.
  */
-import { Fragment, useMemo, type CSSProperties, type MouseEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, type CSSProperties, type MouseEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { Choice } from "../components/Choice";
@@ -174,6 +174,25 @@ function HabitBlock({
 }) {
   const { start, weeks, today } = payload;
   const tint = `var(--c-${habit.color_token})`;
+
+  /*
+   * Open on the most recent weeks, not the oldest.
+   *
+   * Past 26 weeks the row is wider than a phone and has to scroll, and a
+   * scroller starts at its left edge — which here is a year ago. The 1y range
+   * opened on last autumn with today 379px off the right of the screen, so the
+   * range that covers the most history was the one that showed none of the part
+   * you are living in. The grid reads left to right because that is how time
+   * runs; where it is *parked* is a different question, and the answer is now.
+   *
+   * Overshooting is fine: the browser clamps scrollLeft to the maximum, so this
+   * needs no measurement and cannot land half a column off.
+   */
+  const scroller = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [start, weeks]);
   const mondays = useMemo(
     () => Array.from({ length: weeks }, (_, index) => addDays(start, index * 7)),
     [start, weeks],
@@ -231,7 +250,7 @@ function HabitBlock({
 
       {/* Columns shrink to fit the screen and stop at 10px; past that this
           block scrolls on its own rather than squeezing a year into a phone. */}
-      <div className="overflow-x-auto pb-1">
+      <div ref={scroller} className="overflow-x-auto pb-1">
         <div
           /*
            * The grid is a picture. A screen reader should not be walked through

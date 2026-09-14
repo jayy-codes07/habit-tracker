@@ -7,15 +7,8 @@
  * this app reserves for "done".
  */
 import { RING } from "../../components/form";
+import { COLORS } from "./colors";
 import type { ColorToken } from "../../types";
-
-const COLORS: { token: ColorToken; name: string }[] = [
-  { token: "chart-1", name: "Blue" },
-  { token: "chart-2", name: "Teal" },
-  { token: "chart-3", name: "Violet" },
-  { token: "chart-4", name: "Green" },
-  { token: "chart-5", name: "Sand" },
-];
 
 export function ColorPicker({
   value,

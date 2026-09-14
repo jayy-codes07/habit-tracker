@@ -12,16 +12,19 @@
  * those are Grid's and Review's job, and a management list that also grades you
  * is a list you edit defensively.
  *
- * Settings live at the bottom rather than behind a fourth tab: there are two of
- * them, and the one thing a person will look for after "where are my habits" is
- * "where is my data".
+ * Settings live at the bottom rather than behind a tab of their own: there are
+ * three of them, and the one thing a person will look for after "where are my
+ * habits" is "where is my data". Signing out is the third, moved off the tab
+ * row where it cost a seventh of a small phone's width.
  */
 import { useState } from "react";
 
 import { ErrorBox } from "../components/ErrorBox";
 import { Choice } from "../components/Choice";
+import { ICON_BUTTON } from "../components/form";
 import { Chevron } from "../components/icons";
 import { Skeleton } from "../components/Skeleton";
+import { useLogout } from "../features/auth/queries";
 import { HabitEditor } from "../features/habits/HabitEditor";
 import { NewHabitDialog } from "../features/habits/NewHabitDialog";
 import { useHabits, useReorderHabits } from "../features/habits/queries";
@@ -29,9 +32,6 @@ import { scheduleWords } from "../features/habits/verdict";
 import { formatDateShort } from "../lib/dates";
 import { applyTheme, readTheme, type Theme } from "../lib/theme";
 import type { Habit, Id } from "../types";
-
-const ICON_BUTTON =
-  "border-line-strong hover:bg-raised text-ink grid h-11 w-11 place-items-center rounded-lg border transition-colors disabled:opacity-30 disabled:hover:bg-transparent";
 
 /**
  * The one line under a habit's name: what is being asked of it.
@@ -123,6 +123,7 @@ function Row({
  */
 function Settings() {
   const [theme, setTheme] = useState<Theme>(readTheme);
+  const logout = useLogout();
 
   const choose = (next: Theme) => {
     applyTheme(next);
@@ -173,6 +174,22 @@ function Settings() {
             One JSON file with every habit, schedule, log, task and note — archived ones included.
             Months of history are only worth keeping if you can take them with you.
           </p>
+        </div>
+
+        {/* Moved here off the tab row, where it spent a seventh of a small
+            phone's width on the rarest thing in the app and pushed the five
+            screens into a scroller. Nothing is confirmed: the session is a
+            cookie and signing back in is one field. */}
+        <div>
+          <h3 className="text-meta text-muted pb-1.5">Session</h3>
+          <button
+            type="button"
+            onClick={() => logout.mutate()}
+            disabled={logout.isPending}
+            className="border-line-strong hover:bg-raised min-h-12 w-full rounded-lg border px-4 font-medium disabled:opacity-40"
+          >
+            {logout.isPending ? "Signing out…" : "Sign out"}
+          </button>
         </div>
       </div>
     </section>
@@ -327,7 +344,11 @@ export default function Habits() {
         </main>
       )}
 
-      <NewHabitDialog open={newHabit} onClose={() => setNewHabit(false)} />
+      <NewHabitDialog
+        open={newHabit}
+        onClose={() => setNewHabit(false)}
+        taken={active.map((habit) => habit.color_token)}
+      />
       {open && <HabitEditor habit={open} onClose={() => setEditing(null)} />}
     </div>
   );

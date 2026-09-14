@@ -98,6 +98,16 @@ export interface Task {
   completed_at: string | null;
   created_at: string;
   archived_at: string | null;
+  /**
+   * The calendar day `archived_at` fell on, in APP_TIMEZONE — present only on
+   * `?scope=archived`, which is the only list that shows it and the only one
+   * whose rows are archived at all.
+   *
+   * It exists because the client cannot derive it: `archived_at` is an instant
+   * whose ISO string is UTC, so slicing the date off it is a different day from
+   * the app's own for anyone not living on Greenwich.
+   */
+  archived_on?: IsoDate;
 }
 
 /** GET /api/tasks — every scope answers with this shape. */

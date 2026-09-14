@@ -10,3 +10,10 @@ export const PRIMARY =
 export const QUIET =
   "border-line-strong hover:bg-raised min-h-12 w-full rounded-lg border px-4 font-medium disabled:opacity-40";
 export const RING = "has-[:focus-visible]:outline-ink has-[:focus-visible]:outline-2";
+/**
+ * A square icon-only control: the day and month steppers, and the reorder
+ * arrows. It was written out three times in routes/, which is the drift this
+ * file exists to prevent — the steppers on two screens are the same control.
+ */
+export const ICON_BUTTON =
+  "border-line-strong hover:bg-raised text-ink grid h-11 w-11 place-items-center rounded-lg border transition-colors disabled:opacity-30 disabled:hover:bg-transparent";

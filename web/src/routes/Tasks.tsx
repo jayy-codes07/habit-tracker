@@ -268,11 +268,19 @@ export default function Tasks() {
     <div className="mx-auto w-full max-w-[68rem] px-4 pb-20 sm:px-6 lg:px-8">
       <header className="pt-5 pb-7 sm:pt-8 lg:max-w-[46rem]">
         <p className="text-meta text-muted">
-          {open.length === 0
-            ? done.length === 0
-              ? "Nothing on the list"
-              : "Nothing left"
-            : `${open.length} open${overdue.length > 0 ? ` · ${overdue.length} overdue` : ""}`}
+          {/* Every count here is taken from an array that is empty until the
+              payload lands, so this must say nothing rather than guess. It sits
+              outside the error branch below and would otherwise report "Nothing
+              on the list" over the top of "Request failed" — the screen
+              claiming the list is empty when what it means is that it does not
+              know. An empty list and an unanswered one are different things. */}
+          {!query.data
+            ? ""
+            : open.length === 0
+              ? done.length === 0
+                ? "Nothing on the list"
+                : "Nothing left"
+              : `${open.length} open${overdue.length > 0 ? ` · ${overdue.length} overdue` : ""}`}
         </p>
         <h1 className="font-serif text-date mt-1 tracking-[-0.015em]">Tasks</h1>
       </header>
@@ -399,12 +407,14 @@ export default function Tasks() {
                       >
                         <span className="min-w-0 flex-1">
                           <span className="text-muted block truncate">{task.title}</span>
-                          {task.archived_at && (
+                          {task.archived_on && (
                             <span className="text-micro text-muted">
-                              {/* archived_at is an instant; only the day it fell
-                                  on is worth showing, and the cheapest correct
-                                  way to that is the date the server sent. */}
-                              Removed {formatDateShort(task.archived_at.slice(0, 10))}
+                              {/* archived_on, not archived_at: the instant's own
+                                  ISO string is UTC, and slicing it labelled a
+                                  removal a day early for anyone living east of
+                                  Greenwich. The server casts it in APP_TIMEZONE,
+                                  as it already did for a habit's archived_on. */}
+                              Removed {formatDateShort(task.archived_on)}
                             </span>
                           )}
                         </span>
