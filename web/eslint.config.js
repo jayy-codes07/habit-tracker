@@ -25,6 +25,12 @@ export default tseslint.config(
     files: ["scripts/**/*.{js,mjs}"],
     languageOptions: { globals: globals.node },
   },
+  // The Playwright suite is Node too, and exports no components.
+  {
+    files: ["e2e/**/*.ts", "playwright.config.ts"],
+    languageOptions: { globals: globals.node },
+    rules: { "react-refresh/only-export-components": "off" },
+  },
   // Stays last, as in server/eslint.config.js.
   prettier,
 );

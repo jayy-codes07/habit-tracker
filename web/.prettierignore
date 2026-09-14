@@ -1,3 +1,8 @@
 node_modules
 dist
 package-lock.json
+
+# Playwright output, not source
+test-results
+playwright-report
+blob-report
