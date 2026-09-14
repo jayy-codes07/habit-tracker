@@ -60,6 +60,30 @@ export function resolveSchedule(versions, startDate, date) {
 }
 
 /**
+ * The latest version at or before `date` that actually asked for something —
+ * what a paused habit resumes to.
+ *
+ * Mirrors resolveSchedule(), skipping the pauses. It exists because a paused
+ * version stores no days and no target, so resolveSchedule() alone leaves a
+ * client with no way to know what the habit was: it has to invent a schedule to
+ * resume on, and inventing one silently rewrites the habit. That is the same
+ * re-scoring of history the versioned schedule was introduced to prevent, just
+ * arriving through the interface instead of the database.
+ *
+ * Null when nothing was ever asked — a habit paused from its first version.
+ */
+export function resolveResumeSchedule(versions, startDate, date) {
+  if (date < startDate) return null;
+
+  let current = null;
+  for (const version of versions) {
+    if (version.effective_from > date) break;
+    if (version.schedule_kind !== "paused") current = version;
+  }
+  return current;
+}
+
+/**
  * Whether the habit was meant to be done on this specific day.
  *
  * Only a fixed schedule names days. A weekly schedule sets a count and leaves

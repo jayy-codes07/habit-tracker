@@ -116,6 +116,91 @@ describe("GET /api/day/:date", () => {
     });
   });
 
+  /**
+   * Pausing is a fact about the habit; the verdict is a claim about the day, and
+   * the two come apart exactly when the day was worked. `dayVerdict` checks
+   * "done" before it checks paused — deliberately, so a day earned during a
+   * pause still shows — which means a paused habit that was ticked reports
+   * "bonus". The client used to read paused-ness off the verdict, so ticking a
+   * habit and then pausing it left the Day screen showing no pause at all and
+   * offering no way to resume. `paused` is carried separately for that reason.
+   */
+  describe("a paused habit", () => {
+    /** Paused a week ago, on a habit that runs Tue/Thu. */
+    const pausedHabit = async (date) => {
+      const habit = await makeHabit({
+        name: "Morning run",
+        start_date: addDays(date, -30),
+        schedule: { schedule_days: [2, 4] },
+      });
+      await makeSchedule(habit.id, {
+        effective_from: addDays(date, -7),
+        schedule_kind: "paused",
+      });
+      return habit;
+    };
+
+    it("says so, and says what it will resume to", async () => {
+      await withApi(async ({ api }) => {
+        const date = today();
+        await pausedHabit(date);
+
+        const [row] = (await getJson(api, `/api/day/${date}`)).habits;
+        assert.equal(row.paused, true);
+        assert.equal(row.verdict, "paused");
+        assert.equal(row.resumes_to.schedule_kind, "fixed");
+        assert.deepEqual(row.resumes_to.schedule_days, [2, 4]);
+      });
+    });
+
+    it("still says so on a day it was ticked, where the verdict reads 'bonus'", async () => {
+      await withApi(async ({ api }) => {
+        const date = today();
+        const habit = await pausedHabit(date);
+        await makeLog(habit.id, { date, status: "done" });
+
+        const [row] = (await getJson(api, `/api/day/${date}`)).habits;
+        assert.equal(row.verdict, "bonus", "a day worked during a pause is still a bonus");
+        assert.equal(row.paused, true, "and the habit is still paused");
+        assert.deepEqual(
+          row.resumes_to.schedule_days,
+          [2, 4],
+          "so Resume is still offered, and still restores Tue/Thu",
+        );
+      });
+    });
+
+    it("carries the weekly target it will resume to, which a paused week never scores", async () => {
+      await withApi(async ({ api }) => {
+        const date = today();
+        const habit = await makeHabit({
+          start_date: addDays(date, -30),
+          schedule: { schedule_kind: "weekly", weekly_target: 5 },
+        });
+        await makeSchedule(habit.id, {
+          effective_from: addDays(date, -7),
+          schedule_kind: "paused",
+        });
+
+        const [row] = (await getJson(api, `/api/day/${date}`)).habits;
+        assert.equal(row.paused, true);
+        assert.equal(row.week, null, "a paused week is not scored, which is why week is no source");
+        assert.equal(row.resumes_to.weekly_target, 5);
+      });
+    });
+
+    it("reports neither on a habit that is running", async () => {
+      await withApi(async ({ api }) => {
+        const date = today();
+        await makeHabit({ start_date: addDays(date, -10) });
+
+        const [row] = (await getJson(api, `/api/day/${date}`)).habits;
+        assert.equal(row.paused, false);
+        assert.equal(row.resumes_to, null);
+      });
+    });
+  });
+
   it("omits habits that had not started or were already archived", async () => {
     await withApi(async ({ api }) => {
       const date = today();
@@ -123,6 +208,62 @@ describe("GET /api/day/:date", () => {
 
       const body = await getJson(api, `/api/day/${date}`);
       assert.equal(body.habits.length, 0);
+    });
+  });
+
+  /**
+   * Archiving is meant to take a habit off the list, and the list is today's.
+   * It used to keep it until midnight — archived_on is on or after today, which
+   * is the rule that (correctly) keeps it on every past day — so the habit sat
+   * there, still tickable, immediately after being put away.
+   */
+  describe("a habit archived today", () => {
+    const archivedNow = (date) =>
+      makeHabit({
+        name: "Cold shower",
+        start_date: addDays(date, -30),
+        archived_at: new Date(),
+      });
+
+    it("is gone from today at once", async () => {
+      await withApi(async ({ api }) => {
+        const date = today();
+        await archivedNow(date);
+
+        const body = await getJson(api, `/api/day/${date}`);
+        assert.deepEqual(
+          body.habits.map((habit) => habit.name),
+          [],
+        );
+      });
+    });
+
+    it("is still on the days it was actually lived", async () => {
+      await withApi(async ({ api }) => {
+        const date = today();
+        const habit = await archivedNow(date);
+        const yesterday = addDays(date, -1);
+        await makeLog(habit.id, { date: yesterday, status: "done" });
+
+        const body = await getJson(api, `/api/day/${yesterday}`);
+        const [row] = body.habits;
+        assert.equal(row.name, "Cold shower", "a past day is a record, not a list");
+        assert.equal(row.status, "done", "and the day it was logged is still editable");
+      });
+    });
+
+    it("keeps its history in the grid, said to be archived", async () => {
+      await withApi(async ({ api }) => {
+        const date = today();
+        const habit = await archivedNow(date);
+        await makeLog(habit.id, { date: addDays(date, -1), status: "done" });
+
+        const body = await getJson(api, `/api/grid?weeks=4`);
+        const [row] = body.habits;
+        assert.equal(row.name, "Cold shower");
+        assert.equal(row.archived_on, date, "the grid says when, rather than just stopping");
+        assert.ok(row.cells.includes("d"), "and keeps the days that were logged");
+      });
     });
   });
 
@@ -312,6 +453,67 @@ describe("GET /api/review/:month", () => {
       assert.equal(summary.done, 31);
       assert.equal(summary.current_streak, 31, "a finished month must not report zero");
       assert.equal(summary.longest_streak, 31);
+    });
+  });
+
+  /**
+   * A retired habit spends its last days unlogged, so its rate over the stub of
+   * month it lived reads near zero — which the review presented as a current
+   * failure. It reports when the habit was archived instead, and the client
+   * decides that from `archived_on` against the month's `end`, never against
+   * today: a habit archived later was alive for all of an earlier month, and
+   * that month has to keep reading the way it was lived.
+   */
+  describe("archived_on", () => {
+    /** Ran all January, abandoned in February, archived on the 10th. */
+    const retiredInFebruary = async () => {
+      const habit = await makeHabit({
+        name: "Cold shower",
+        start_date: "2026-01-01",
+        archived_at: "2026-02-10T09:00:00Z",
+      });
+      for (const date of eachDay("2026-01-01", "2026-01-31")) {
+        await makeLog(habit.id, { date, status: "done" });
+      }
+      return habit;
+    };
+
+    it("is reported for the month the habit retired in", async () => {
+      await withApi(async ({ api }) => {
+        await retiredInFebruary();
+
+        const [summary] = (await getJson(api, "/api/review/2026-02")).habits;
+        assert.equal(summary.archived_on, "2026-02-10");
+        assert.equal(summary.unlogged, 10, "the days it quietly stopped are still counted");
+        assert.equal(summary.consistency, 0, "the rate is still reported, and still zero");
+      });
+    });
+
+    /**
+     * The historical half, and the one that is easy to get wrong: January must
+     * not learn about an archiving that happened in February.
+     */
+    it("is left in the future for a month the habit was alive through", async () => {
+      await withApi(async ({ api }) => {
+        await retiredInFebruary();
+
+        const body = await getJson(api, "/api/review/2026-01");
+        const [summary] = body.habits;
+
+        assert.equal(summary.archived_on, "2026-02-10");
+        assert.ok(summary.archived_on > body.end, "so January reads as the month it was");
+        assert.equal(summary.consistency, 1, "a full January is still a full January");
+        assert.equal(summary.current_streak, 31);
+      });
+    });
+
+    it("is null for a habit that is still running", async () => {
+      await withApi(async ({ api }) => {
+        await makeHabit({ name: "Read", start_date: "2026-01-01" });
+
+        const [summary] = (await getJson(api, "/api/review/2026-01")).habits;
+        assert.equal(summary.archived_on, null);
+      });
     });
   });
 

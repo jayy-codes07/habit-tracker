@@ -17,6 +17,7 @@ import { describe, it } from "node:test";
 import {
   dayVerdict,
   isScheduledOn,
+  resolveResumeSchedule,
   resolveSchedule,
   VERDICT,
   VERDICT_CHAR,
@@ -105,6 +106,64 @@ describe("paused spans", () => {
 
   it("still resolves normally before the pause began", () => {
     assert.equal(resolveSchedule(pausedSpan, START, "2026-02-01").schedule_kind, "fixed");
+  });
+});
+
+/**
+ * What a pause hides, and what the interface needs back.
+ *
+ * A paused version stores no days and no target, so resolveSchedule() alone
+ * cannot tell anyone what the habit was. Everything here exists so that
+ * resuming restores the commitment that was interrupted rather than inventing
+ * one — inventing one turned a Tue/Thu habit into an every-day habit, which
+ * then failed five days a week.
+ */
+describe("resolveResumeSchedule", () => {
+  it("reports the fixed days the pause interrupted, not a default", () => {
+    const versions = [fixed(START, [2, 4]), paused(CHANGED)];
+    const resume = resolveResumeSchedule(versions, START, "2026-02-10");
+
+    assert.equal(resume.schedule_kind, "fixed");
+    assert.deepEqual(resume.schedule_days, [2, 4]);
+    assert.equal(resume.weekly_target, null);
+  });
+
+  it("reports the weekly target the pause interrupted, not three", () => {
+    const versions = [weekly(START, 5), paused(CHANGED)];
+    const resume = resolveResumeSchedule(versions, START, "2026-02-10");
+
+    assert.equal(resume.schedule_kind, "weekly");
+    assert.equal(resume.weekly_target, 5);
+    assert.equal(resume.schedule_days, null);
+  });
+
+  /** The one before the pause, not the oldest one that was ever set. */
+  it("takes the most recent commitment, across several changes", () => {
+    const versions = [fixed(START, [1, 3, 5]), weekly("2026-01-19", 4), paused(CHANGED)];
+    const resume = resolveResumeSchedule(versions, START, "2026-02-10");
+
+    assert.equal(resume.schedule_kind, "weekly");
+    assert.equal(resume.weekly_target, 4);
+  });
+
+  it("ignores versions that have not taken effect yet", () => {
+    const versions = [fixed(START, [2, 4]), paused("2026-01-19"), weekly(CHANGED, 6)];
+
+    assert.deepEqual(
+      resolveResumeSchedule(versions, START, "2026-01-26").schedule_days,
+      [2, 4],
+      "a future version must not be handed back as what to resume to",
+    );
+    assert.equal(resolveResumeSchedule(versions, START, CHANGED).weekly_target, 6);
+  });
+
+  /** Nothing was ever asked, so there is nothing to restore. */
+  it("is null for a habit paused from its very first version", () => {
+    assert.equal(resolveResumeSchedule([paused(START)], START, "2026-02-10"), null);
+  });
+
+  it("is null before the habit started", () => {
+    assert.equal(resolveResumeSchedule([fixed(START, [2, 4])], START, "2026-01-04"), null);
   });
 });
 

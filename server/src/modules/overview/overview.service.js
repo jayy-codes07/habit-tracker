@@ -20,6 +20,7 @@ import {
 import {
   dayVerdict,
   isScheduledOn,
+  resolveResumeSchedule,
   resolveSchedule,
   VERDICT,
   VERDICT_CHAR,
@@ -95,6 +96,17 @@ async function loadWindow(from, to) {
  */
 const streakHorizon = (date, today) => (date < today ? addDays(date, 1) : today);
 
+/** The columns of a schedule version the client needs to redraw its picker. */
+const resumeShape = (schedule) =>
+  schedule
+    ? {
+        effective_from: schedule.effective_from,
+        schedule_kind: schedule.schedule_kind,
+        schedule_days: schedule.schedule_days,
+        weekly_target: schedule.weekly_target,
+      }
+    : null;
+
 // ---------------------------------------------------------------------------
 // The day screen
 // ---------------------------------------------------------------------------
@@ -110,16 +122,30 @@ export async function buildDay(date) {
     journalService.loadEntry(date, "day"),
   ]);
 
+  /*
+   * Archiving takes a habit off the list at once, including on the day it
+   * happened. loadWindow keeps a habit whose archived_on is on or after the day
+   * being read, which is right for every past day — the grid paints those days
+   * too, and the two screens must not disagree about a day that was lived — but
+   * for today it left a habit you had just archived sitting in the list, still
+   * tickable, until midnight.
+   *
+   * Only today and later are filtered, so the day it was archived on is still
+   * reachable by stepping back to it tomorrow.
+   */
+  const listed = date < today ? habits : habits.filter((habit) => !habit.archived_on);
+
   return {
     date,
     // So the client can render "Today" without consulting its own clock, and
     // agree with the server about when the day rolls over.
     today,
-    habits: habits.map((habit) => {
+    habits: listed.map((habit) => {
       const view = views.get(habit.id);
       const schedule = resolveSchedule(view.versions, habit.start_date, date);
       const log = dayLogs.get(habit.id) ?? null;
       const kind = effectiveKind(view, horizon);
+      const paused = schedule?.schedule_kind === "paused";
 
       return {
         id: habit.id,
@@ -127,6 +153,16 @@ export async function buildDay(date) {
         color_token: habit.color_token,
         schedule_kind: kind,
         scheduled: isScheduledOn(schedule, date),
+        // A fact about the habit, not about the day. The client used to read it
+        // off `verdict`, which cannot carry it: a paused day that was worked
+        // reports `bonus`, so a habit paused on a day it was ticked looked
+        // active and offered no way back.
+        paused,
+        // What "Resume" will restore. Null unless paused — see present() in
+        // habits.controller.js, which reports the same pair.
+        resumes_to: paused
+          ? resumeShape(resolveResumeSchedule(view.versions, habit.start_date, date))
+          : null,
         status: log?.status ?? null,
         note: log?.note ?? null,
         verdict: dayVerdict({
@@ -186,6 +222,10 @@ export async function buildGrid({ end, weeks }) {
         name: habit.name,
         color_token: habit.color_token,
         schedule_kind: kind,
+        // A retired habit keeps its history here — a row that simply stopped,
+        // with nothing to say whether it was abandoned or put away, is the
+        // difference between a record and an accusation.
+        archived_on: habit.archived_on,
         cells: days
           .map(
             (date) =>
@@ -265,6 +305,14 @@ export async function buildReview(month) {
         name: habit.name,
         color_token: habit.color_token,
         schedule_kind: effectiveKind(view, today),
+        /*
+         * Reported raw, and compared against this month rather than against
+         * today. A habit archived *after* the month shown was fully alive
+         * through it, and that month must keep reading the way it was lived —
+         * so the client marks a row retired only when archived_on falls on or
+         * before `end`.
+         */
+        archived_on: habit.archived_on,
         ...countVerdicts(view, habit, start, to, today),
         consistency: rate.rate,
         done_of: rate.opportunities,

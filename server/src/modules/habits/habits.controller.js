@@ -10,7 +10,7 @@ import { z } from "zod";
 
 import { today } from "../../lib/dates.js";
 import { idParam, isoDate } from "../../lib/schemas.js";
-import { resolveSchedule } from "../../lib/scheduling.js";
+import { resolveResumeSchedule, resolveSchedule } from "../../lib/scheduling.js";
 import * as habits from "./habits.service.js";
 
 // ---------------------------------------------------------------------------
@@ -88,8 +88,19 @@ const toSchedule = (body) => ({
  * only for DATE. Coercing to a number here would be lossy above 2^53 and would
  * buy nothing.
  */
+const shape = (schedule) =>
+  schedule
+    ? {
+        effective_from: schedule.effective_from,
+        schedule_kind: schedule.schedule_kind,
+        schedule_days: schedule.schedule_days,
+        weekly_target: schedule.weekly_target,
+      }
+    : null;
+
 function present(habit, versions, on) {
-  const schedule = resolveSchedule(versions ?? [], habit.start_date, on);
+  const history = versions ?? [];
+  const schedule = resolveSchedule(history, habit.start_date, on);
 
   return {
     id: habit.id,
@@ -98,14 +109,13 @@ function present(habit, versions, on) {
     sort_order: habit.sort_order,
     start_date: habit.start_date,
     archived_on: habit.archived_on,
-    schedule: schedule
-      ? {
-          effective_from: schedule.effective_from,
-          schedule_kind: schedule.schedule_kind,
-          schedule_days: schedule.schedule_days,
-          weekly_target: schedule.weekly_target,
-        }
-      : null,
+    schedule: shape(schedule),
+    // Only meaningful while paused, and null otherwise: a habit that is not
+    // paused resumes to nothing. Never paused itself — see resolveResumeSchedule.
+    resumes_to:
+      schedule?.schedule_kind === "paused"
+        ? shape(resolveResumeSchedule(history, habit.start_date, on))
+        : null,
   };
 }
 

@@ -445,6 +445,135 @@ describe("changing a schedule", () => {
   });
 });
 
+/**
+ * What a paused habit resumes to.
+ *
+ * A paused version stores no days and no target, so a client that is told only
+ * "paused" has to invent a schedule to resume on. It invented every-day, and
+ * resuming a Tue/Thu habit quietly turned it into one that failed five days a
+ * week — the same re-scoring of history the versioned schedule exists to stop,
+ * arriving through the interface instead of the database. `resumes_to` is what
+ * closes that hole, so these are its contract.
+ */
+describe("resumes_to", () => {
+  const pause = (api, id) =>
+    api(`/api/habits/${id}/schedule`, { method: "POST", body: { schedule_kind: "paused" } });
+
+  const list = async (api) => (await (await api("/api/habits")).json()).habits;
+
+  /**
+   * A habit that has been running a while, so pausing it today *appends* a
+   * version. Starting one today instead would put both versions on the same
+   * effective_from, where setSchedule's upsert replaces the first outright —
+   * the schedule is then genuinely gone rather than hidden, and null is the
+   * honest answer. That is the documented "correct the version you just set"
+   * behaviour, not something resumes_to can see around.
+   */
+  const running = (overrides) => ({ start_date: addDays(today(), -30), ...overrides });
+
+  it("is null while the habit is not paused", async () => {
+    await withApi(async ({ api }) => {
+      await create(api);
+      assert.equal((await list(api))[0].resumes_to, null);
+    });
+  });
+
+  it("reports the exact fixed days a pause interrupted", async () => {
+    await withApi(async ({ api }) => {
+      const habit = await create(
+        api,
+        running({ schedule: { schedule_kind: "fixed", schedule_days: [2, 4] } }),
+      );
+      await pause(api, habit.id);
+
+      const [row] = await list(api);
+      assert.equal(row.schedule.schedule_kind, "paused");
+      assert.equal(row.resumes_to.schedule_kind, "fixed");
+      assert.deepEqual(row.resumes_to.schedule_days, [2, 4], "Tue/Thu must survive the pause");
+    });
+  });
+
+  it("reports the exact weekly target a pause interrupted", async () => {
+    await withApi(async ({ api }) => {
+      const habit = await create(
+        api,
+        running({ schedule: { schedule_kind: "weekly", weekly_target: 5 } }),
+      );
+      await pause(api, habit.id);
+
+      const [row] = await list(api);
+      assert.equal(row.resumes_to.schedule_kind, "weekly");
+      assert.equal(row.resumes_to.weekly_target, 5, "five a week must not come back as three");
+    });
+  });
+
+  it("is null for a habit paused from its very first version", async () => {
+    await withApi(async ({ api }) => {
+      await create(api, { schedule: { schedule_kind: "paused" } });
+
+      const [row] = await list(api);
+      assert.equal(row.schedule.schedule_kind, "paused");
+      assert.equal(row.resumes_to, null, "nothing was ever asked, so there is nothing to restore");
+    });
+  });
+
+  /**
+   * The corner this cannot see around, recorded so it is a known shape rather
+   * than a surprise: both versions land on the same effective_from, so
+   * setSchedule's upsert replaces the first instead of appending. The earlier
+   * commitment is not hidden, it is gone, and the picker falls back to its
+   * default. Widening the upsert to spare a pause would break the correction it
+   * exists for.
+   */
+  it("is null when the pause lands on the same day the schedule was set", async () => {
+    await withApi(async ({ api }) => {
+      const habit = await create(api, {
+        schedule: { schedule_kind: "fixed", schedule_days: [2, 4] },
+      });
+      await pause(api, habit.id);
+
+      assert.equal((await list(api))[0].resumes_to, null);
+    });
+  });
+
+  /**
+   * The round trip the interface actually performs: read resumes_to, post it
+   * straight back. Every kind must land on exactly what it started as.
+   */
+  for (const [name, schedule] of [
+    ["Tue/Thu", { schedule_kind: "fixed", schedule_days: [2, 4] }],
+    ["weekdays", { schedule_kind: "fixed", schedule_days: [1, 2, 3, 4, 5] }],
+    ["every day", FIXED_DAILY],
+    ["a single day", { schedule_kind: "fixed", schedule_days: [7] }],
+    ["five a week", { schedule_kind: "weekly", weekly_target: 5 }],
+    ["once a week", { schedule_kind: "weekly", weekly_target: 1 }],
+  ]) {
+    it(`resumes ${name} unchanged`, async () => {
+      await withApi(async ({ api }) => {
+        const habit = await create(api, running({ schedule }));
+        await pause(api, habit.id);
+
+        const { resumes_to: resume } = (await list(api))[0];
+        const response = await api(`/api/habits/${habit.id}/schedule`, {
+          method: "POST",
+          // Exactly what the pickers send back: the kind and its one payload.
+          body:
+            resume.schedule_kind === "weekly"
+              ? { schedule_kind: "weekly", weekly_target: resume.weekly_target }
+              : { schedule_kind: "fixed", schedule_days: resume.schedule_days },
+        });
+        assert.equal(response.status, 201);
+
+        const [row] = await list(api);
+        assert.equal(row.schedule.schedule_kind, schedule.schedule_kind);
+        assert.deepEqual(row.schedule.schedule_days, schedule.schedule_days ?? null);
+        assert.equal(row.schedule.weekly_target, schedule.weekly_target ?? null);
+        assert.equal(row.resumes_to, null, "resuming clears the field");
+      });
+    });
+  }
+});
+
 describe("logging a day", () => {
   const logPath = (id, date) => `/api/habits/${id}/logs/${date}`;
 
