@@ -10,7 +10,8 @@
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 
-import { addDays, today } from "../src/lib/dates.js";
+import { config } from "../src/config/index.js";
+import { addDays, today, todayIn } from "../src/lib/dates.js";
 import { withApi } from "./helpers/api.js";
 import { closePool, makeTask } from "./helpers/db.js";
 
@@ -302,6 +303,72 @@ describe("archiving a task", () => {
       await api(`/api/tasks/${task.id}`, { method: "PATCH", body: { archived: false } });
 
       assert.equal((await list(api)).length, 1);
+    });
+  });
+});
+
+/**
+ * A due date is only overdue relative to a current date, so the list has to say
+ * which one it was graded against — otherwise the client picks, and a phone in
+ * another zone files a task due today under "Overdue" while /day still calls it
+ * due. Same reason /day and /grid carry it.
+ */
+describe("the today the tasks list is graded against", () => {
+  it("rides along on every scope", async () => {
+    await withApi(async ({ api }) => {
+      for (const scope of ["", "?scope=all", "?scope=archived"]) {
+        const payload = await (await api(`/api/tasks${scope}`)).json();
+        assert.equal(payload.today, today(), `scope "${scope || "open"}"`);
+      }
+    });
+  });
+
+  /**
+   * The container runs UTC, so a server-clock "today" would pass a naive test
+   * and still be wrong for part of every day anywhere else. These two zones are
+   * 26 hours apart and therefore never on the same date as each other, which is
+   * what makes the assertion independent of when the suite happens to run.
+   *
+   * config is mutated rather than process.env: it is a boot-time snapshot, and
+   * today() reads config.timezone at call time.
+   */
+  it("follows APP_TIMEZONE and not the process clock", async () => {
+    const original = config.timezone;
+    try {
+      await withApi(async ({ api }) => {
+        config.timezone = "Pacific/Kiritimati"; // UTC+14
+        const ahead = (await (await api("/api/tasks")).json()).today;
+
+        config.timezone = "Etc/GMT+12"; // UTC-12
+        const behind = (await (await api("/api/tasks")).json()).today;
+
+        assert.equal(ahead, todayIn("Pacific/Kiritimati"));
+        assert.equal(behind, todayIn("Etc/GMT+12"));
+        assert.notEqual(ahead, behind, "26 hours apart: these can never be the same date");
+      });
+    } finally {
+      config.timezone = original;
+    }
+  });
+
+  /**
+   * The grouping the payload exists to drive. Overdue is strictly before today
+   * and "due today" is not overdue — the boundary the whole fix turns on.
+   */
+  it("puts the boundary where the screen groups on it", async () => {
+    await withApi(async ({ api }) => {
+      const now = today();
+      await create(api, { title: "Yesterday", due_date: addDays(now, -1) });
+      await create(api, { title: "Today", due_date: now });
+      await create(api, { title: "Tomorrow", due_date: addDays(now, 1) });
+
+      const { tasks, today: served } = await (await api("/api/tasks")).json();
+      const overdue = tasks.filter((task) => task.due_date !== null && task.due_date < served);
+
+      assert.deepEqual(
+        overdue.map((task) => task.title),
+        ["Yesterday"],
+      );
     });
   });
 });

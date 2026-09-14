@@ -68,8 +68,11 @@ function Tabs() {
   const onTasks = pathname.startsWith("/tasks");
 
   return (
-    // pt-[env(...)] is zero in a browser tab and the status bar's height in an
-    // installed app, where viewport-fit=cover lets the page reach under it.
+    // The safe-area padding below is zero in a browser tab and the status bar's
+    // height in an installed app, where viewport-fit=cover lets the page reach
+    // under it. Spelling the utility out in prose here would be a mistake:
+    // Tailwind scans this file as raw text, comments included, and would compile
+    // the example into a rule that Lightning CSS then rejects.
     <nav className="border-line border-b pt-[env(safe-area-inset-top)]">
       <div className="[scrollbar-width:none] mx-auto flex w-full max-w-[68rem] items-center gap-1 overflow-x-auto px-4 sm:px-6 lg:px-8 [&::-webkit-scrollbar]:hidden">
         <Tab to="/" active={!onGrid && !onReview && !onHabits && !onTasks}>

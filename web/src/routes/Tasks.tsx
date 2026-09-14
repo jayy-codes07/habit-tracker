@@ -28,13 +28,7 @@ import { Check, Chevron } from "../components/icons";
 import { Skeleton } from "../components/Skeleton";
 import { TaskEditor } from "../features/tasks/TaskEditor";
 import { useCreateTask, usePatchTask, useTasks } from "../features/tasks/queries";
-import {
-  browserToday,
-  daysBetween,
-  formatDateShort,
-  formatWeekday,
-  relativeDay,
-} from "../lib/dates";
+import { daysBetween, formatDateShort, formatWeekday, relativeDay } from "../lib/dates";
 import type { Id, IsoDate, Task } from "../types";
 
 /**
@@ -246,9 +240,20 @@ export default function Tasks() {
   const [editing, setEditing] = useState<Id | null>(null);
   const [removed, setRemoved] = useState<Task | null>(null);
 
-  const today = browserToday();
-  const tasks = query.data ?? [];
-  const archived = removedQuery.data ?? [];
+  const tasks = query.data?.tasks ?? [];
+  const archived = removedQuery.data?.tasks ?? [];
+
+  /*
+   * The server's today, in APP_TIMEZONE — never the browser's. A phone an hour
+   * ahead of the app's zone would otherwise file a task due today under Overdue
+   * while the Day screen still calls it due, which is the two screens
+   * disagreeing about what day it is.
+   *
+   * The fallback is unreachable rather than a guess: `today` arrives on the same
+   * payload as the tasks, so until it is here the list is empty and there is
+   * nothing to group.
+   */
+  const today = query.data?.today ?? "";
 
   const open = tasks.filter((task) => !task.completed);
   const done = tasks.filter((task) => task.completed);

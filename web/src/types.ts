@@ -87,6 +87,16 @@ export interface Task {
   archived_at: string | null;
 }
 
+/** GET /api/tasks — every scope answers with this shape. */
+export interface TasksPayload {
+  tasks: Task[];
+  /**
+   * The server's today, in APP_TIMEZONE. As on DayPayload: never use the
+   * browser's clock to decide whether a due date has passed.
+   */
+  today: IsoDate;
+}
+
 export interface JournalEntry {
   date: IsoDate;
   kind: "day" | "month";

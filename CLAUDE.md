@@ -315,8 +315,9 @@ read with one map:
   each owning its `api.ts` (endpoints), `queries.ts` (TanStack hooks) and whatever domain logic and
   domain UI it has. `habits/` owns **schedules and logs too**, as the server's module does, which
   is why `useSetLog` lives there and not under `overview/`. `overview/` owns the composed screen
-  reads — `/day` now, `/grid` and `/review` next — and no tables.
-- `routes/` — one file per URL. Route components compose features; features never import routes.
+  reads — `/day`, `/grid` and `/review`, all three implemented — and no tables.
+- `routes/` — one file per URL: `Day`, `Grid`, `Review`, `Habits`, `Tasks`, `Login`. Route
+  components compose features; features never import routes.
 - `components/` — domain-free UI only (`Dialog`, `Choice`, `ErrorBox`, `Skeleton`, `icons`, and
   `form.ts`, the shared control classes). Anything that knows what a habit is belongs in `features/`.
 - `lib/` — `api-client.ts` (the transport: `request`, `ApiError`; endpoints live with their
@@ -330,6 +331,12 @@ fixing last Tuesday are the same job, so they are the same component — which i
 `GET /api/day/:date` returns `today`: the client never consults its own clock, because the day
 rolls over in `APP_TIMEZONE` and the browser may be somewhere else. `/` renders the browser's
 date, then redirects to `data.today` if the server disagrees.
+
+`/day`, `/grid` **and `/tasks`** therefore all carry `today`: a due date is only overdue relative
+to a current date, so the tasks list has to be graded against the same one. The browser's clock
+(`browserToday()`) may only choose which period a screen *opens* on — the day for `/`, the month
+for `/review`. Opening on the wrong one is ambiguous for a few hours at a boundary and costs one
+tap; grading against the wrong one puts a task under "Overdue" that `/day` still calls due.
 
 Three payload traps, all handled in
 [web/src/features/habits/verdict.ts](web/src/features/habits/verdict.ts) and documented there:

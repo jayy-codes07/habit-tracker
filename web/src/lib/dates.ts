@@ -7,8 +7,8 @@
  * it was given. ISO date strings also compare lexicographically, so `a <= b` is
  * a correct comparison and nothing here needs to parse for that.
  *
- * What "today" is never comes from here — it comes from the server, on every
- * /day and /grid payload, because the day rolls over in APP_TIMEZONE.
+ * What "today" is never comes from here — it comes from the server, on the
+ * /day, /grid and /tasks payloads, because the day rolls over in APP_TIMEZONE.
  */
 import type { IsoDate, IsoMonth } from "../types";
 
@@ -23,7 +23,13 @@ export function addDays(iso: IsoDate, days: number): IsoDate {
 /** ISO-8601 weekday: 1 = Monday ... 7 = Sunday. */
 export const isoWeekday = (iso: IsoDate): number => at(iso).getUTCDay() || 7;
 
-/** The browser's own date, used once — to decide which day to open on. */
+/**
+ * The browser's own date. Its only sanctioned use is choosing which period a
+ * screen opens on — the day for /, the month for /review — and never deciding
+ * how something is scored or grouped. Opening on the wrong one is ambiguous for
+ * a few hours at a boundary and costs one tap of the stepper; grading against
+ * the wrong one silently contradicts the rest of the app.
+ */
 export const browserToday = (): IsoDate => {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);

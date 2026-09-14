@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 
+import { today } from "../../lib/dates.js";
 import { idParam, isoDate } from "../../lib/schemas.js";
 import * as tasks from "./tasks.service.js";
 
@@ -35,6 +36,17 @@ const updateBody = z
  */
 const listQuery = z.object({ scope: z.enum(["open", "all", "archived"]).optional() });
 
+/**
+ * `today` rides along for the same reason /day and /grid carry it: a due date is
+ * only overdue relative to a current date, and the client must not decide that
+ * one from its own clock. A phone an hour ahead of APP_TIMEZONE would file
+ * today's task under "Overdue" while the day screen still calls it due — the two
+ * screens disagreeing about what day it is.
+ *
+ * It is on the list response rather than a lookup of its own because it is only
+ * ever needed alongside the tasks it grades, and a second request could answer
+ * from the other side of midnight.
+ */
 export async function list(req, res) {
   const { scope } = listQuery.parse(req.query);
   res.json({
@@ -42,6 +54,7 @@ export async function list(req, res) {
       includeCompleted: scope === "all",
       archived: scope === "archived",
     }),
+    today: today(),
   });
 }
 
