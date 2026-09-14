@@ -3,9 +3,10 @@
  * it should still exist.
  *
  * Removing is PATCH { archived: true } — the server has no DELETE for a task on
- * purpose. But no endpoint lists archived tasks either, so this cannot offer a
- * "removed" drawer to fish one back out of. The undo belongs at the list, on
- * the spot, which is where the caller puts it.
+ * purpose. The way back is not here, because this sheet closes on removal: it
+ * hands the removed task to the caller, which puts an undo bar on the spot and
+ * keeps a "removed" drawer — its own read of scope=archived — to restore from
+ * later. Both undo by PATCHing { archived: false } back.
  *
  * The due date is the one field that can be cleared as well as changed, and the
  * API distinguishes the two: omitting `due_date` leaves it alone, sending null

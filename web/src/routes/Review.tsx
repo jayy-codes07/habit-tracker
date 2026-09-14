@@ -9,8 +9,13 @@
  *
  * Nothing is scored here. `consistency` arrives computed — skipped days have
  * already left the denominator, paused days never entered it, a weekly week
- * contributed its target — and this screen only formats it. Two traps in the
- * payload are handled and commented below: a null rate, and `done_of`.
+ * contributed its target — and this screen only formats it. Three traps in the
+ * payload are handled and commented below: a null rate, `done_of`, and
+ * `archived_on`, which is only about this month when it falls on or before
+ * `end` — a habit archived later was alive for all of the month being read.
+ *
+ * The streak figures are bounded by the window the server loaded, so what they
+ * are called changes with the month; see streakLabel().
  */
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
@@ -20,8 +25,15 @@ import { Chevron } from "../components/icons";
 import { Skeleton } from "../components/Skeleton";
 import { useSaveMonthJournal } from "../features/journal/queries";
 import { useReview } from "../features/overview/queries";
-import { addMonths, browserToday, formatDateLong, formatMonthLong, monthOf } from "../lib/dates";
-import type { IsoMonth, JournalEntry, ReviewHabit } from "../types";
+import {
+  addMonths,
+  browserToday,
+  formatDateLong,
+  formatDateShort,
+  formatMonthLong,
+  monthOf,
+} from "../lib/dates";
+import type { IsoDate, IsoMonth, JournalEntry, ReviewHabit } from "../types";
 
 const ICON_BUTTON =
   "border-line-strong hover:bg-raised text-ink grid h-11 w-11 place-items-center rounded-lg border transition-colors disabled:opacity-30 disabled:hover:bg-transparent";
@@ -53,29 +65,71 @@ function tallyLine(habit: ReviewHabit): string {
   return parts.join(" · ");
 }
 
-function HabitRow({ habit }: { habit: ReviewHabit }) {
+/**
+ * When the streak figures were taken.
+ *
+ * The server measures both to the end of the window the review loaded, so they
+ * are as of today only for the current month; for a past month they are the
+ * streak that month finished on. An archived habit stops earlier still — the
+ * walk is capped at its archive date — so once it has retired, neither of the
+ * other two words is true.
+ */
+const streakLabel = (retired: boolean, isThisMonth: boolean) =>
+  retired ? "Streak when archived" : isThisMonth ? "Streak now" : "Streak at month end";
+
+function HabitRow({
+  habit,
+  end,
+  isThisMonth,
+}: {
+  habit: ReviewHabit;
+  end: IsoDate;
+  isThisMonth: boolean;
+}) {
   const tally = tallyLine(habit);
+
+  /*
+   * Against the month's end, never against today: a habit archived after this
+   * month was alive for all of it, and that month keeps reading the way it was
+   * lived. The server has already dropped anything archived before the month
+   * began, so this is exactly "retired within the month on screen".
+   */
+  const retiredOn =
+    habit.archived_on !== null && habit.archived_on <= end ? habit.archived_on : null;
+  const retired = retiredOn !== null;
 
   return (
     <li className="border-line/70 flex items-start gap-3 border-b py-3 last:border-b-0">
       <span
         aria-hidden="true"
         className="mt-2 h-2.5 w-2.5 shrink-0 rounded-full"
-        style={{ background: `var(--c-${habit.color_token})` }}
+        style={{ background: `var(--c-${habit.color_token})`, opacity: retired ? 0.35 : 1 }}
       />
 
       <div className="min-w-0 flex-1">
-        <h3 className="text-row font-medium">{habit.name}</h3>
+        <h3 className={`text-row font-medium ${retired ? "text-muted" : ""}`}>{habit.name}</h3>
         {tally && <p className="text-meta text-muted">{tally}</p>}
-        {/* Neither streak is bounded by the month on the server, so neither is
-            described as if it were. */}
         <p className="text-meta text-muted tabular">
-          Streak now {habit.current_streak} · best {habit.longest_streak}
+          {streakLabel(retired, isThisMonth)} {habit.current_streak} · best {habit.longest_streak}
         </p>
       </div>
 
       <div className="shrink-0 text-right">
-        {habit.consistency === null ? (
+        {/*
+         * A habit retired mid-month spends its last days unlogged, so its rate
+         * over the stub of month it lived is near zero — and a month that reads
+         * "0% consistency" against a habit you deliberately put away is an
+         * accusation, not a record. The tally on the left still says exactly
+         * what happened; this says why it stopped.
+         */}
+        {retiredOn ? (
+          <>
+            <p className="text-meta text-muted tabular leading-tight">
+              {formatDateShort(retiredOn)}
+            </p>
+            <p className="text-micro text-muted mt-1">archived</p>
+          </>
+        ) : habit.consistency === null ? (
           <>
             <p className="text-section text-muted tabular leading-none">—</p>
             <p className="text-micro text-muted mt-1">nothing asked</p>
@@ -260,7 +314,12 @@ export default function Review() {
                 ) : (
                   <ul>
                     {data.habits.map((habit) => (
-                      <HabitRow key={habit.id} habit={habit} />
+                      <HabitRow
+                        key={habit.id}
+                        habit={habit}
+                        end={data.end}
+                        isThisMonth={isThisMonth}
+                      />
                     ))}
                   </ul>
                 )}

@@ -1,6 +1,8 @@
 import { Link, Navigate, Route, Routes, useLocation } from "react-router";
 
+import { ErrorBox } from "./components/ErrorBox";
 import { useLogout, useSession } from "./features/auth/queries";
+import { ApiError } from "./lib/api-client";
 import Day from "./routes/Day";
 import Grid from "./routes/Grid";
 import Habits from "./routes/Habits";
@@ -10,13 +12,23 @@ import Tasks from "./routes/Tasks";
 
 /**
  * The session query is the only route guard. It sits behind requireAuth on the
- * server, so an error — 401, expired, tampered — means "not signed in", and
- * main.tsx marks it stale whenever any other request 401s.
+ * server, so a REFUSED session — 401, expired, tampered — means "not signed
+ * in", and main.tsx marks it stale whenever any other request 401s.
+ *
+ * A session that could not be asked about is a different thing, and the two
+ * must not share a screen. request() reports an unreachable server as status 0,
+ * and showing Login for that tells someone holding a phone with no signal that
+ * they have been signed out — they have not, and their password cannot fix it.
+ * So a transport failure says so and offers a retry, and only a real refusal
+ * reaches Login.
  */
 export default function App() {
   const session = useSession();
+  const unreachable = session.error instanceof ApiError && session.error.status === 0;
 
   if (session.isPending) return <Boot />;
+  if (unreachable)
+    return <Unreachable error={session.error} onRetry={() => void session.refetch()} />;
   if (session.isError) return <Login />;
 
   return (
@@ -41,6 +53,20 @@ export default function App() {
 const Boot = () => (
   <div className="grid min-h-dvh place-items-center">
     <p className="text-muted animate-[fade-in_200ms_400ms_both]">Loading…</p>
+  </div>
+);
+
+/**
+ * The server could not be reached, so nothing is known about the session yet.
+ * ErrorBox already carries request()'s "Can't reach the server." and a retry;
+ * the session query does not retry on its own (see useSession), which is what
+ * makes that button the way back rather than decoration.
+ */
+const Unreachable = ({ error, onRetry }: { error: unknown; onRetry: () => void }) => (
+  <div className="grid min-h-dvh place-items-center p-4">
+    <div className="w-full max-w-sm">
+      <ErrorBox error={error} onRetry={onRetry} />
+    </div>
   </div>
 );
 

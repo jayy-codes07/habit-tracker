@@ -66,6 +66,17 @@ export type ScheduleInput =
   | { schedule_kind: "weekly"; weekly_target: number }
   | { schedule_kind: "paused" };
 
+/**
+ * What a paused habit will resume to: its latest version that actually asked
+ * for something. Never itself paused, so `schedule_kind` here is only ever
+ * "fixed" or "weekly", and null when nothing was ever asked.
+ *
+ * It is on the payload because the client cannot derive it. A paused version
+ * stores no days and no target, so without this the interface has to invent a
+ * schedule to resume on — and inventing one silently rewrites the habit.
+ */
+export type ResumeSchedule = Schedule | null;
+
 /** GET /api/habits — `schedule` is resolved as of today, not a version history. */
 export interface Habit {
   id: Id;
@@ -75,6 +86,8 @@ export interface Habit {
   start_date: IsoDate;
   archived_on: IsoDate | null;
   schedule: Schedule | null;
+  /** Set only while `schedule.schedule_kind` is "paused". */
+  resumes_to: ResumeSchedule;
 }
 
 export interface Task {
@@ -123,6 +136,17 @@ export interface DayHabit {
    * every day. Use isActionable() in features/habits/verdict.ts.
    */
   scheduled: boolean;
+  /**
+   * Whether the schedule in force on this date is a paused one — a fact about
+   * the habit, not about the day.
+   *
+   * TRAP: this is NOT `verdict === "paused"`, and never was. A paused day that
+   * was worked reports verdict "bonus", so reading paused-ness off the verdict
+   * loses it exactly when the habit was ticked.
+   */
+  paused: boolean;
+  /** Set only while `paused`. See ResumeSchedule. */
+  resumes_to: ResumeSchedule;
   status: LogStatus | null;
   note: string | null;
   verdict: Verdict;
@@ -160,6 +184,11 @@ export interface GridHabit {
   color_token: ColorToken;
   schedule_kind: EffectiveKind;
   /**
+   * Set once the habit was archived. Its cells stay — the grid is a record —
+   * but a row that stops dead with nothing to explain it reads as abandonment.
+   */
+  archived_on: IsoDate | null;
+  /**
    * `weeks * 7` characters, one per day from `start`, Monday first. A day is a
    * character rather than an object because a year row is then 364 bytes and
    * not 364 objects — decode it with CELL in features/habits/verdict.ts.
@@ -188,6 +217,13 @@ export interface ReviewHabit {
   name: string;
   color_token: ColorToken;
   schedule_kind: EffectiveKind;
+  /**
+   * TRAP: compare this against the month's `end`, never against today. A habit
+   * archived after the month shown was alive for all of it, and that month has
+   * to keep reading the way it was lived — only `archived_on <= end` means the
+   * habit retired within, or before, the month on screen.
+   */
+  archived_on: IsoDate | null;
   done: number;
   missed: number;
   skipped: number;
@@ -205,7 +241,16 @@ export interface ReviewHabit {
    * it, and never pair the two into "4 of 3".
    */
   done_of: number;
-  /** Both streaks are measured to today, not to the end of the month shown. */
+  /**
+   * Both streaks are measured to the end of the window the review loaded, which
+   * is the earlier of the month's last day and today. So for the current month
+   * they are as of today, and for a past month they are as they stood when that
+   * month ended — the streak that month finished on, not the one running now.
+   *
+   * That is the server capping the walk at `through` (see lastDay() in
+   * lib/streaks.js), not an accident: a windowed read that measured to today
+   * would walk over days it never loaded and report a broken streak.
+   */
   current_streak: number;
   longest_streak: number;
 }

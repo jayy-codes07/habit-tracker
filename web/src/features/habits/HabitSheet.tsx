@@ -4,7 +4,7 @@ import { Choice } from "../../components/Choice";
 import { Dialog } from "../../components/Dialog";
 import { FIELD, PRIMARY, QUIET } from "../../components/form";
 import { SchedulePicker } from "./SchedulePicker";
-import { EVERY_DAY, isDraftValid, toScheduleInput, type ScheduleDraft } from "./schedule";
+import { draftOf, isDraftValid, toScheduleInput } from "./schedule";
 import { useSetLog, useSetSchedule } from "./queries";
 import { metaLine } from "./verdict";
 import type { DayHabit, IsoDate } from "../../types";
@@ -38,16 +38,18 @@ export function HabitSheet({
 }) {
   const [mode, setMode] = useState<"actions" | "resume">("actions");
   const [note, setNote] = useState(habit.note ?? "");
-  const [draft, setDraft] = useState<ScheduleDraft>(
-    habit.schedule_kind === "weekly"
-      ? { kind: "weekly", target: habit.week?.target ?? 3 }
-      : { kind: "fixed", days: EVERY_DAY },
-  );
+  // The version the pause interrupted, from the server. The old guess read the
+  // target off `week`, which a paused week never scores, so every weekly habit
+  // resumed at three a week whatever it had been.
+  const [draft, setDraft] = useState(draftOf(habit.resumes_to));
 
   const setLog = useSetLog(date);
   const schedule = useSetSchedule();
 
-  const paused = habit.verdict === "paused";
+  // Not `verdict === "paused"`: a paused day that was worked reports "bonus",
+  // so that test lost the pause exactly when the habit had been ticked — the
+  // sheet then offered "Pause" on an already-paused habit and no way back.
+  const paused = habit.paused;
   const error = setLog.error ?? schedule.error;
 
   if (mode === "resume") {

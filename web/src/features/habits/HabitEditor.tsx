@@ -40,7 +40,10 @@ export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => v
   const [name, setName] = useState(habit.name);
   const [color, setColor] = useState<ColorToken>(habit.color_token);
   const [paused, setPaused] = useState(wasPaused);
-  const [draft, setDraft] = useState(draftOf(current));
+  // While paused, `current` is the paused version and says nothing about days or
+  // target — `resumes_to` is the version the pause interrupted, and is what
+  // unticking Paused must restore. Guessing here turned Tue/Thu into every day.
+  const [draft, setDraft] = useState(draftOf(wasPaused ? habit.resumes_to : current));
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const patch = usePatchHabit();

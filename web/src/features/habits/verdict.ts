@@ -33,7 +33,7 @@ export function markOf(habit: DayHabit): Mark {
 export function isActionable(habit: DayHabit): boolean {
   if (habit.verdict === "inactive") return false;
   if (habit.status !== null) return true;
-  if (habit.verdict === "paused") return false;
+  if (habit.paused) return false;
   return habit.schedule_kind === "weekly" || habit.scheduled;
 }
 
@@ -60,7 +60,9 @@ export function stateLabel(habit: DayHabit): string {
  */
 export function metaLine(habit: DayHabit): string | null {
   if (habit.verdict === "inactive") return "Not started yet";
-  if (habit.verdict === "paused") return "Paused";
+  // `paused`, not the verdict: a paused day that was worked reports "bonus", and
+  // reading the verdict here left a paused habit describing its week instead.
+  if (habit.paused) return "Paused";
 
   if (habit.schedule_kind === "weekly") {
     if (!habit.week) return "No target this week";

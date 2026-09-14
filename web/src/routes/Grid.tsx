@@ -200,7 +200,12 @@ function HabitBlock({
   };
 
   return (
-    <section>
+    // min-w-0 is what makes the scroller below actually scroll. This section is
+    // a grid item, and a grid item's default min-width:auto refuses to shrink
+    // below its content's min-content width — 706px for a year of columns — so
+    // the whole page took that width and scrolled sideways instead, stranding
+    // the nav and the heading in the left 360px. 26w and 52w both did it.
+    <section className="min-w-0">
       {/* Outside the scroller, so the name it belongs to cannot slide away from
           the row when a year of columns has to scroll on a phone. */}
       <header className="pb-2">
@@ -208,9 +213,18 @@ function HabitBlock({
           <span
             aria-hidden="true"
             className="h-2.5 w-2.5 shrink-0 rounded-full"
-            style={{ background: tint }}
+            // A retired habit is still itself, just no longer asked for — the
+            // colour hollows out, as a paused one does on /habits.
+            style={{ background: tint, opacity: habit.archived_on ? 0.35 : 1 }}
           />
-          {habit.name}
+          <span className={habit.archived_on ? "text-muted" : undefined}>{habit.name}</span>
+          {/* Said here rather than left to the row simply stopping: a row that
+              ends with no explanation reads as a habit that was dropped. */}
+          {habit.archived_on && (
+            <span className="border-line text-micro text-muted shrink-0 rounded border px-1.5 py-0.5 font-normal">
+              Archived {formatDateShort(habit.archived_on)}
+            </span>
+          )}
         </h2>
         <p className="text-meta text-muted tabular">{summaryLine(habit, today)}</p>
       </header>

@@ -183,8 +183,16 @@ function Habits({
 
   // Tapping the row toggles the common case and nothing else: done, or back to
   // never-logged. Skipped, missed and notes live one tap deeper, in the sheet.
-  const toggle = (habit: DayHabit) =>
+  //
+  // Except when there is a note. Clearing a log deletes the row, and the note
+  // goes with it — permanently, with the tick restored by the very next tap, so
+  // nothing looks as though it went wrong. A note is writing, not a tick, and
+  // the shallow gesture must not be able to destroy it; a habit carrying one
+  // opens the sheet instead, where clearing is its own labelled button.
+  const toggle = (habit: DayHabit) => {
+    if (habit.status === "done" && habit.note) return setSheetFor(habit.id);
     setLog.mutate({ habit, status: habit.status === "done" ? null : "done" });
+  };
 
   const open = habits.find((habit) => habit.id === sheetFor) ?? null;
 

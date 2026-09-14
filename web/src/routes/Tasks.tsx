@@ -285,11 +285,12 @@ export default function Tasks() {
         <main className="lg:max-w-[46rem]">
           <AddTask />
 
-          {/* Removing is reversible only right here: no endpoint lists archived
-              tasks, so this is the last moment the id is in reach. It waits
-              rather than timing out — a bar that vanishes on its own takes the
-              only way back with it — but it must be dismissable, or the one
-              answer the screen accepts is "undo". */}
+          {/* The quick way back, for the removal you regret immediately. The
+              "removed" drawer below is the patient one, so this is a
+              convenience rather than the last chance — but it still waits
+              rather than timing out, because a bar that vanishes on its own
+              takes the obvious way back with it and leaves you hunting. It must
+              be dismissable, or the one answer the screen accepts is "undo". */}
           {removed && (
             <div
               role="status"

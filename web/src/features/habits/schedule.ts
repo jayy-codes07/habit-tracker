@@ -40,12 +40,20 @@ export const matchesSchedule = (current: Schedule | null, draft: ScheduleDraft) 
   );
 };
 
-/** The draft a habit's current version should open in the editor as. */
+/**
+ * The draft a schedule version should open in a picker as.
+ *
+ * Callers pass the habit's current version, or — when it is paused — the
+ * server's `resumes_to`, which is the version the pause interrupted. Never pass
+ * a paused version: it stores no days and no target, so the fallback below is
+ * all that is left and the habit silently becomes an every-day one on save.
+ *
+ * The fallback is therefore only for a habit that genuinely never asked for
+ * anything: `resumes_to` is null when a habit was paused from its first version.
+ */
 export const draftOf = (current: Schedule | null): ScheduleDraft =>
   current?.schedule_kind === "weekly"
     ? { kind: "weekly", target: current.weekly_target ?? 3 }
     : current?.schedule_kind === "fixed" && current.schedule_days?.length
       ? { kind: "fixed", days: current.schedule_days }
-      : // A paused habit does not report what it was before the pause, so the
-        // picker opens on a sensible default rather than a guess.
-        { kind: "fixed", days: EVERY_DAY };
+      : { kind: "fixed", days: EVERY_DAY };
