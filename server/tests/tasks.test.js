@@ -242,6 +242,30 @@ describe("archiving a task", () => {
   });
 
   /**
+   * archived_at is an instant; archived_on is the calendar day it fell on, and
+   * which day that is depends on the zone the app lives in. 23:30Z is still the
+   * 22nd in UTC and already the 23rd in Asia/Kolkata, so a client that sliced
+   * the instant's own ISO string would label this removal a day early for
+   * everyone living east of Greenwich.
+   */
+  it("reports archived_on as the day the removal fell on in APP_TIMEZONE", async () => {
+    const original = config.timezone;
+    try {
+      await withApi(async ({ api }) => {
+        await makeTask({ title: "Removed late", archived_at: "2026-03-22T23:30:00Z" });
+
+        config.timezone = "Asia/Kolkata"; // UTC+05:30 — 05:00 on the 23rd
+        assert.equal((await list(api, "?scope=archived"))[0].archived_on, "2026-03-23");
+
+        config.timezone = "Etc/UTC";
+        assert.equal((await list(api, "?scope=archived"))[0].archived_on, "2026-03-22");
+      });
+    } finally {
+      config.timezone = original;
+    }
+  });
+
+  /**
    * Two removals in the same instant still need a stable order, or the list
    * reshuffles between reads. Newest id first keeps it consistent with the
    * timestamp ordering above.

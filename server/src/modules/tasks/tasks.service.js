@@ -19,6 +19,19 @@ import { notFound } from "../../lib/errors.js";
 const COLUMNS = "id, title, due_date, completed, completed_at, created_at, archived_at";
 
 /**
+ * archived_at is an instant; a recovery list wants the calendar day it fell on,
+ * in the app's own zone — the same cast habits.service.js makes for its own
+ * archived_on, and for the same reason. Slicing the instant's ISO string on the
+ * client instead would pin the label to UTC, which is nobody's calendar: a task
+ * removed at 05:00 in UTC+05:30 was removed the previous day according to Z.
+ *
+ * Only the archived read selects it. Every other read filters archived_at IS
+ * NULL, so the column would be null in all of them and the cast would buy a
+ * bound parameter for nothing.
+ */
+const ARCHIVED_ON = "(archived_at AT TIME ZONE $1)::date AS archived_on";
+
+/**
  * Open tasks by default; `includeCompleted` adds completed ones. Neither ever
  * returns an archived task.
  *
@@ -32,10 +45,11 @@ const COLUMNS = "id, title, due_date, completed, completed_at, created_at, archi
 export async function loadTasks({ includeCompleted = false, archived = false } = {}) {
   if (archived) {
     const { rows } = await query(
-      `SELECT ${COLUMNS}
+      `SELECT ${COLUMNS}, ${ARCHIVED_ON}
          FROM tasks
         WHERE archived_at IS NOT NULL
         ORDER BY archived_at DESC, id DESC`,
+      [config.timezone],
     );
     return rows;
   }
