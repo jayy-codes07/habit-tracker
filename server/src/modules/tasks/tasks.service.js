@@ -18,8 +18,28 @@ import { notFound } from "../../lib/errors.js";
 
 const COLUMNS = "id, title, due_date, completed, completed_at, created_at, archived_at";
 
-/** Open tasks by default; `scope: "all"` adds completed ones. Never archived. */
-export async function loadTasks({ includeCompleted = false } = {}) {
+/**
+ * Open tasks by default; `includeCompleted` adds completed ones. Neither ever
+ * returns an archived task.
+ *
+ * `archived` is the mirror image and the only way back to a removed task: every
+ * archived one, whether it was finished or not. It is ordered most recently
+ * removed first because that is what a recovery list is for — due date and
+ * completion rank a task among things you still intend to do, which is exactly
+ * what these are not. A separate statement rather than a CASE in ORDER BY: the
+ * two lists answer different questions and share only their columns.
+ */
+export async function loadTasks({ includeCompleted = false, archived = false } = {}) {
+  if (archived) {
+    const { rows } = await query(
+      `SELECT ${COLUMNS}
+         FROM tasks
+        WHERE archived_at IS NOT NULL
+        ORDER BY archived_at DESC, id DESC`,
+    );
+    return rows;
+  }
+
   const { rows } = await query(
     `SELECT ${COLUMNS}
        FROM tasks

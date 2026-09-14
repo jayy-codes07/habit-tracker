@@ -137,6 +137,17 @@ export function createHabit({ name, colorToken, startDate, schedule }) {
  * COALESCE rather than a dynamically built SET list: both columns are NOT NULL,
  * so "leave it alone" and "set it to null" can never be confused, and the query
  * stays one fixed string with no interpolation.
+ *
+ * Restoring an archived habit re-numbers it to the end of the active list, the
+ * same way createHabit numbers a new one. A habit keeps its sort_order while it
+ * is archived, and the number it left behind is handed out again by the next
+ * habit created, so a restore that kept the old value would put two active
+ * habits on the same one. Nothing then breaks loudly — ORDER BY sort_order, id
+ * still returns a stable list, and the next reorder renumbers everything — but
+ * the two habits are ranked by an id tiebreak nobody can see or change, and the
+ * restored habit reappears in the middle of the list rather than where putting
+ * something back would suggest. Coming back at the end is also the honest
+ * reading: the list is a running order of what you are tracking now.
  */
 export async function updateHabit(id, { name, colorToken, archived }) {
   const { rows } = await query(
@@ -148,6 +159,13 @@ export async function updateHabit(id, { name, colorToken, archived }) {
               -- Re-archiving keeps the original moment; it is not a new event.
               WHEN $5 THEN COALESCE(h.archived_at, now())
               ELSE NULL
+            END,
+            sort_order = CASE
+              -- Only an actual restore. Patching archived:false on a habit that
+              -- is already active is a no-op and must not shuffle it to the end.
+              WHEN $5::boolean IS FALSE AND h.archived_at IS NOT NULL
+                THEN COALESCE((SELECT max(sort_order) + 1 FROM habits WHERE archived_at IS NULL), 1)
+              ELSE h.sort_order
             END
       WHERE h.id = $2
       RETURNING ${HABIT_COLUMNS}`,

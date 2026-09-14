@@ -190,6 +190,75 @@ describe("updating a habit", () => {
     });
   });
 
+  /**
+   * The numbers an archived habit left behind are handed out again by every
+   * habit created after it, so restoring one at its old sort_order puts two
+   * active habits on the same number — and a duplicate makes the display order
+   * depend on the id tiebreak that the reorder screen cannot see or send.
+   */
+  it("restores a habit to the end of the active order, not onto its old number", async () => {
+    await withApi(async ({ api }) => {
+      const first = await create(api, { name: "First" });
+      await api(`/api/habits/${first.id}`, { method: "PATCH", body: { archived: true } });
+
+      // Both of these are numbered as if First had never existed.
+      const second = await create(api, { name: "Second" });
+      const third = await create(api, { name: "Third" });
+      assert.equal(second.sort_order, first.sort_order, "the freed number is handed out again");
+
+      const restored = await api(`/api/habits/${first.id}`, {
+        method: "PATCH",
+        body: { archived: false },
+      });
+      const back = (await restored.json()).habit;
+
+      assert.equal(back.archived_on, null);
+      assert.ok(
+        back.sort_order > third.sort_order,
+        `restored habit must come after every active one, got ${back.sort_order}`,
+      );
+
+      const { habits } = await (await api("/api/habits")).json();
+      assert.deepEqual(
+        habits.map((habit) => habit.name),
+        ["Second", "Third", "First"],
+      );
+      assert.equal(
+        new Set(habits.map((habit) => habit.sort_order)).size,
+        habits.length,
+        "no two active habits may share a sort_order",
+      );
+
+      // The whole point of the uniqueness: the order the screen was shown is
+      // the order it can send back.
+      const reorder = await api("/api/habits/order", {
+        method: "PUT",
+        body: { ids: habits.map((habit) => habit.id) },
+      });
+      assert.equal(reorder.status, 200);
+    });
+  });
+
+  it("leaves the order alone when archived:false is a no-op", async () => {
+    await withApi(async ({ api }) => {
+      const first = await create(api, { name: "First" });
+      const second = await create(api, { name: "Second" });
+
+      const response = await api(`/api/habits/${first.id}`, {
+        method: "PATCH",
+        body: { archived: false },
+      });
+
+      const unchanged = (await response.json()).habit;
+      assert.equal(
+        unchanged.sort_order,
+        first.sort_order,
+        "an active habit must not be renumbered",
+      );
+      assert.ok(unchanged.sort_order < second.sort_order);
+    });
+  });
+
   it("rejects an empty patch and an unknown habit", async () => {
     await withApi(async ({ api }) => {
       const habit = await create(api);

@@ -12,7 +12,7 @@ import { after, describe, it } from "node:test";
 
 import { addDays, today } from "../src/lib/dates.js";
 import { withApi } from "./helpers/api.js";
-import { closePool } from "./helpers/db.js";
+import { closePool, makeTask } from "./helpers/db.js";
 
 after(closePool);
 
@@ -170,13 +170,113 @@ describe("archiving a task", () => {
     });
   });
 
-  it("hides an archived task from every list", async () => {
+  it("hides an archived task from the working lists", async () => {
     await withApi(async ({ api }) => {
       const task = await create(api, { title: "Cancelled" });
       await api(`/api/tasks/${task.id}`, { method: "PATCH", body: { archived: true } });
 
       assert.equal((await list(api)).length, 0, "open list");
       assert.equal((await list(api, "?scope=all")).length, 0, "all list");
+    });
+  });
+
+  /**
+   * The recovery path. Without it archiving is one-way from the interface's
+   * point of view: PATCH { archived: false } works, but nothing hands back the
+   * id to send it for, so a task removed and then navigated away from exists
+   * only in the export.
+   */
+  it("lists archived tasks under scope=archived, and only those", async () => {
+    await withApi(async ({ api }) => {
+      const kept = await create(api, { title: "Still here" });
+      const removed = await create(api, { title: "Removed" });
+      await api(`/api/tasks/${removed.id}`, { method: "PATCH", body: { archived: true } });
+
+      const archived = await list(api, "?scope=archived");
+      assert.deepEqual(
+        archived.map((task) => task.title),
+        ["Removed"],
+      );
+      assert.ok(archived[0].archived_at !== null, "the row carries when it was removed");
+
+      // The working lists are untouched by the new scope.
+      assert.deepEqual(
+        (await list(api)).map((task) => task.id),
+        [kept.id],
+      );
+    });
+  });
+
+  it("includes a completed task in scope=archived", async () => {
+    await withApi(async ({ api }) => {
+      const task = await create(api, { title: "Done then removed" });
+      await api(`/api/tasks/${task.id}`, { method: "PATCH", body: { completed: true } });
+      await api(`/api/tasks/${task.id}`, { method: "PATCH", body: { archived: true } });
+
+      const archived = await list(api, "?scope=archived");
+      assert.equal(archived.length, 1, "completion must not hide it from recovery");
+      assert.equal(archived[0].completed, true);
+    });
+  });
+
+  /**
+   * Most recently removed first — a recovery list is read from the top.
+   *
+   * The timestamps are written by the fixture, not by archiving through the
+   * API. now() is transaction start time, and this harness runs each test
+   * inside one transaction, so two PATCHes here would stamp the *same*
+   * archived_at and this would silently be testing the id tiebreak instead.
+   */
+  it("orders archived tasks by when they were removed, newest first", async () => {
+    await withApi(async ({ api }) => {
+      await makeTask({ title: "Removed in January", archived_at: "2026-01-05T09:00:00Z" });
+      await makeTask({ title: "Removed in March", archived_at: "2026-03-22T09:00:00Z" });
+      await makeTask({ title: "Removed in February", archived_at: "2026-02-11T09:00:00Z" });
+
+      assert.deepEqual(
+        (await list(api, "?scope=archived")).map((task) => task.title),
+        ["Removed in March", "Removed in February", "Removed in January"],
+      );
+    });
+  });
+
+  /**
+   * Two removals in the same instant still need a stable order, or the list
+   * reshuffles between reads. Newest id first keeps it consistent with the
+   * timestamp ordering above.
+   */
+  it("breaks a same-instant tie by id, newest first", async () => {
+    await withApi(async ({ api }) => {
+      const at = "2026-04-01T12:00:00Z";
+      await makeTask({ title: "Earlier row", archived_at: at });
+      await makeTask({ title: "Later row", archived_at: at });
+
+      assert.deepEqual(
+        (await list(api, "?scope=archived")).map((task) => task.title),
+        ["Later row", "Earlier row"],
+      );
+    });
+  });
+
+  it("restores a task listed under scope=archived", async () => {
+    await withApi(async ({ api }) => {
+      const task = await create(api, { title: "Fished back out" });
+      await api(`/api/tasks/${task.id}`, { method: "PATCH", body: { archived: true } });
+
+      // Exactly what the screen does: read the id from the archived list, then
+      // send it back. Nothing else is needed to recover a removal.
+      const [found] = await list(api, "?scope=archived");
+      await api(`/api/tasks/${found.id}`, { method: "PATCH", body: { archived: false } });
+
+      assert.deepEqual(
+        (await list(api)).map((row) => row.title),
+        ["Fished back out"],
+      );
+      assert.equal(
+        (await list(api, "?scope=archived")).length,
+        0,
+        "and it leaves the removed list",
+      );
     });
   });
 

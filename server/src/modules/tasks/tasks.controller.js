@@ -28,11 +28,21 @@ const updateBody = z
   })
   .refine((body) => Object.keys(body).length > 0, "nothing to update");
 
-const listQuery = z.object({ scope: z.enum(["open", "all"]).optional() });
+/**
+ * "archived" is its own scope rather than a flag alongside the others: an
+ * archived task is not a kind of open task, and the three are mutually
+ * exclusive views of the same table.
+ */
+const listQuery = z.object({ scope: z.enum(["open", "all", "archived"]).optional() });
 
 export async function list(req, res) {
   const { scope } = listQuery.parse(req.query);
-  res.json({ tasks: await tasks.loadTasks({ includeCompleted: scope === "all" }) });
+  res.json({
+    tasks: await tasks.loadTasks({
+      includeCompleted: scope === "all",
+      archived: scope === "archived",
+    }),
+  });
 }
 
 export async function create(req, res) {
