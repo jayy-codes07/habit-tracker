@@ -40,7 +40,19 @@ the api container on :3000:
 
 ```bash
 cd web && npm run dev           # also: typecheck, lint, lint:fix, format, format:check
+cd web && npm run test:e2e      # Playwright; starts Vite itself, needs the api container up
 ```
+
+`test:e2e` is the regression suite for the handful of failures that live above the API and that
+no server test can see — a query cache that strands its observer, a tap that deletes a note, a
+grid that overflows the page. It runs against the **development database** and writes to it; every
+fixture it makes is named `E2E ` and swept before each test, because a test that times out is torn
+down before its own cleanup finishes. Everything the server can be held to belongs in `npm test`
+instead, which is faster and needs no browser.
+
+`node --watch` in the api container does not always see edits through the bind mount (Docker
+Desktop on Windows in particular). If a change to `server/src` is not showing up, the container is
+still running the old code — `docker compose restart api`.
 
 The api image is built from the `runtime` stage, whose deps stage runs `npm ci --omit=dev`, and the
 override mounts an anonymous volume over `/app/node_modules` so the host mount cannot shadow the
@@ -201,7 +213,14 @@ live in constraints, with the reasoning in comments.
   Editing a schedule **appends a version**, so past weeks keep the meaning they had when they were
   lived. Pausing is a version too (`schedule_kind = 'paused'`, no scheduled days), which is why a
   break reads as absence rather than failure: neutral in the grid, streaks pass through it, excluded
-  from the consistency denominator.
+  from the consistency denominator. A paused version stores no days and no target, so **what a
+  paused habit will resume to is not derivable from the version in force** — `resolveResumeSchedule()`
+  walks back to the last version that asked for something, and `/habits` and `/day` both report it
+  as `resumes_to`. It exists because the client had to invent a schedule to resume on and invented
+  every-day: resuming a Tue/Thu habit turned it into one that then failed five days a week. Never
+  guess this on the client. It is null when a habit was paused from its first version, and also
+  when the pause landed on the same `effective_from` as the schedule it replaced — `setSchedule`'s
+  upsert genuinely destroys that version rather than hiding it.
 - **A habit log has four states, not three**: `done` / `missed` / `skipped`, and *no row at all*
   meaning never logged — a distinct state that queries must preserve.
 - `habits.color_token` is a theme token (`chart-1`…`chart-5`), never hex. `target_value`, `unit` and
@@ -213,6 +232,15 @@ live in constraints, with the reasoning in comments.
   reappear as overdue for ever. That is a correctness requirement, not an optimisation.
 - **Habits can be deleted only while they have no logs** (409 otherwise). Archive a history, delete
   a mistake.
+- **An archived habit leaves the list at once, but never leaves the record.** `/day` drops it from
+  today and from any later day the moment it is archived — it used to sit there, still tickable,
+  until midnight, which reads as an archive that failed. Past days keep it, because the grid still
+  paints those days and the two screens must not disagree about a day that was actually lived.
+  `/grid` and `/review` keep it always and report `archived_on`, so a row that stops can say why:
+  an unexplained stop reads as abandonment, and a habit retired mid-month spends its last days
+  unlogged, which the review used to present as a 0% failure. The client compares `archived_on`
+  against the **month's `end`**, never against today — a habit archived in September was alive all
+  through July, and July has to keep reading the way it was lived.
 
 ### Streaks and consistency
 
@@ -338,7 +366,7 @@ to a current date, so the tasks list has to be graded against the same one. The 
 for `/review`. Opening on the wrong one is ambiguous for a few hours at a boundary and costs one
 tap; grading against the wrong one puts a task under "Overdue" that `/day` still calls due.
 
-Three payload traps, all handled in
+Four payload traps, all handled in
 [web/src/features/habits/verdict.ts](web/src/features/habits/verdict.ts) and documented there:
 
 - **`scheduled` is true only for a fixed habit.** Weekly *and paused* habits report `false`, so
@@ -347,6 +375,11 @@ Three payload traps, all handled in
 - **`schedule_kind` means two things.** On `/habits` it is the stored kind (`fixed|weekly|paused`);
   on `/day`, `/grid` and `/review` it is `effectiveKind()`, which skips paused versions and can
   only be `fixed|weekly`. Hence `ScheduleKind` and `EffectiveKind` in `types.ts`.
+- **Paused-ness is `paused`, never `verdict === "paused"`.** The verdict is a claim about the day
+  and `dayVerdict()` checks `done` first, so a paused day that was worked reports `bonus` — reading
+  the verdict lost the pause exactly when the habit had been ticked, and the day sheet then offered
+  "Pause" on an already-paused habit with no way back. `/day` carries `paused` as a fact about the
+  habit for this reason.
 - **`done` and `done_of` do not pair up** (see the review payload). `done_of` is never rendered.
 
 **Optimistic updates patch `status` only.** `verdict` and `streak` cannot be computed honestly on
