@@ -9,6 +9,7 @@ import { createHealthRouter } from "../modules/health/health.routes.js";
 import { createJournalRouter } from "../modules/journal/journal.routes.js";
 import { createLeetcodeRouter } from "../modules/leetcode/leetcode.routes.js";
 import { createOverviewRouter } from "../modules/overview/overview.routes.js";
+import { createRemindersRouter } from "../modules/reminders/reminders.routes.js";
 import { createSearchRouter } from "../modules/search/search.routes.js";
 import { createTasksRouter } from "../modules/tasks/tasks.routes.js";
 
@@ -33,6 +34,7 @@ export function createApiRouter() {
   router.use("/journal", createJournalRouter());
   router.use("/leetcode", createLeetcodeRouter());
   router.use("/search", createSearchRouter());
+  router.use("/reminders", createRemindersRouter());
 
   // Whole-screen reads and the backup, each declaring its own path.
   router.use(createOverviewRouter());

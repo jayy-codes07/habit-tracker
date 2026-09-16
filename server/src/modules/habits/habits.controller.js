@@ -10,7 +10,7 @@ import { z } from "zod";
 
 import { eachDay, endOfWeek, startOfWeek, today } from "../../lib/dates.js";
 import { notFound } from "../../lib/errors.js";
-import { idParam, isoDate } from "../../lib/schemas.js";
+import { clockTime, idParam, isoDate } from "../../lib/schemas.js";
 import {
   dayVerdict,
   resolveNextSchedule,
@@ -118,6 +118,11 @@ const updateBody = z
     // the habit has measured nothing, and is refused by the service afterwards.
     // Which of the two was meant is decided by key presence, not by the value.
     unit: habitUnit.nullable().optional(),
+    // Nullable for the same reason and with the same rule: null turns the
+    // reminder off, an absent key leaves it alone. A reminder is a property of
+    // the habit, not an object of its own, so it is set here rather than
+    // through the reminders module.
+    reminder_at: clockTime.nullable().optional(),
   })
   .refine((body) => Object.keys(body).length > 0, "nothing to update");
 
@@ -213,6 +218,13 @@ function present(habit, versions, on) {
      * following Monday) vanished on the next refetch.
      */
     next_schedule: shapeSchedule(resolveNextSchedule(history, on)),
+    /*
+     * The wall-clock time this habit is reminded at, or null for no reminder.
+     * It says nothing about whether a reminder will actually arrive — that
+     * depends on the master switch, quiet hours, and whether the day asks
+     * anything of the habit at all, none of which belong on a habit row.
+     */
+    reminder_at: habit.reminder_at,
   };
 }
 
@@ -330,6 +342,8 @@ export async function update(req, res) {
     // leaves it alone, and null cannot tell those apart on its own.
     unitGiven: "unit" in body,
     unit: body.unit ?? null,
+    reminderGiven: "reminder_at" in body,
+    reminderAt: body.reminder_at ?? null,
   });
 
   res.json({ habit: (await presentAll([habit]))[0] });

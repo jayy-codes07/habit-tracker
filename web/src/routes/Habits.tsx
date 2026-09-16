@@ -26,6 +26,8 @@ import { ICON_BUTTON, PRIMARY, QUIET } from "../components/form";
 import { Chevron } from "../components/icons";
 import { Skeleton } from "../components/Skeleton";
 import { useLogout } from "../features/auth/queries";
+import { Backup } from "../features/backup/Backup";
+import { Notifications } from "../features/notifications/Notifications";
 import { NewHabitDialog } from "../features/habits/NewHabitDialog";
 import { useHabits, useReorderHabits } from "../features/habits/queries";
 import { scheduleWords } from "../features/habits/verdict";
@@ -139,12 +141,9 @@ function Row({
 // --- settings ---------------------------------------------------------------
 
 /**
- * The two things that are not habits: how it looks, and getting the data out.
- *
- * The export is a plain link. The endpoint already sends Content-Disposition
- * with a dated filename and the session cookie rides along on a same-origin
- * navigation, so fetching it into a blob would be more code for a worse result
- * — no progress, no native "keep" dialog on a phone.
+ * The things that are not habits: how it looks, when it reminds you, getting
+ * the data out — and getting it back in, which is the half that makes the other
+ * half worth anything. Both live in features/backup.
  */
 function Settings() {
   const [theme, setTheme] = useState<Theme>(readTheme);
@@ -189,16 +188,11 @@ function Settings() {
           </div>
         </fieldset>
 
-        <div>
-          <h3 className="label text-muted pb-2.5">Your data</h3>
-          <a href="/api/export" download className={QUIET}>
-            Download everything
-          </a>
-          <p className="text-meta text-muted mt-2">
-            One JSON file with every habit, schedule, log, task and note — archived ones included.
-            Months of history are only worth keeping if you can take them with you.
-          </p>
-        </div>
+        {/* Between how it looks and where the data goes: a reminder is a
+            preference about this device and this app, not a habit. */}
+        <Notifications />
+
+        <Backup />
 
         {/* Moved here off the tab row, where it spent a seventh of a small
             phone's width on the rarest thing in the app and pushed the five

@@ -4,13 +4,22 @@
  * The decisions worth pinning here: "needs review" is derived from two columns
  * and never stored, marking something reviewed twice does not move the date, a
  * problem that has become a record can only be archived, and a screenshot is
- * checked against its own bytes before it is stored and served back.
+ * checked against its own bytes before it is stored.
+ *
+ * The screenshot bytes live in Cloudinary now, so these tests replace the SDK's
+ * uploader and assert on what the app did with the answer: which asset it
+ * pointed the row at, which one it destroyed, and what it does when either call
+ * fails. Nothing here reaches the network. What is worth pinning is the
+ * ORDERING, because that is the whole of the orphan story - an upload whose row
+ * write failed is destroyed, a replaced asset is destroyed only once the row
+ * points at the new one, and a delete Cloudinary refused never clears the row.
  *
  *   npm test
  */
 import assert from "node:assert/strict";
-import { after, describe, it } from "node:test";
+import { after, afterEach, describe, it, mock } from "node:test";
 
+import { cloudinary } from "../src/lib/cloudinary/config.js";
 import { today } from "../src/lib/dates.js";
 import { withApi } from "./helpers/api.js";
 import { closePool, makeProblem } from "./helpers/db.js";
@@ -37,6 +46,39 @@ const WEBP_SIGNATURE = Buffer.concat([
   Buffer.from([0x1a, 0x00, 0x00, 0x00]),
   Buffer.from("WEBPVP8 ", "latin1"),
 ]);
+
+/**
+ * The media store, replaced.
+ *
+ * Every upload answers with a fresh public_id, which is what the real one does
+ * - leetcode's upload() generates a UUID per call - so a replacement genuinely
+ * changes the URL here too. The recorded calls are the assertion surface.
+ */
+function stubCloudinary({ upload, destroy } = {}) {
+  const calls = { uploads: [], destroys: [] };
+
+  mock.method(cloudinary.uploader, "upload", async (uri, options) => {
+    calls.uploads.push({ uri, options });
+    const nth = calls.uploads.length;
+    if (upload) return upload(nth);
+    return {
+      public_id: `${options.folder}/${options.public_id}`,
+      format: "png",
+      width: 1024,
+      height: 768,
+      bytes: 4096 + nth,
+    };
+  });
+
+  mock.method(cloudinary.uploader, "destroy", async (publicId) => {
+    calls.destroys.push(publicId);
+    return destroy ? destroy(publicId) : { result: "ok" };
+  });
+
+  return calls;
+}
+
+afterEach(() => mock.restoreAll());
 
 async function create(api, body) {
   const response = await api("/api/leetcode", { method: "POST", body });
@@ -480,6 +522,7 @@ describe("deleting a problem", () => {
   });
 
   it("refuses one that carries a screenshot, until the screenshot goes", async () => {
+    stubCloudinary();
     await withApi(async ({ api }) => {
       const problem = await create(api, SOLID);
       await upload(api, problem.id, PNG, "image/png");
@@ -499,89 +542,229 @@ describe("deleting a problem", () => {
 });
 
 describe("the screenshot", () => {
-  it("stores the bytes and serves them back as what they are", async () => {
+  it("stores the reference, not the bytes, and says where the image is", async () => {
+    const cloud = stubCloudinary();
+
     await withApi(async ({ api }) => {
       const problem = await create(api, SOLID);
 
       const put = await upload(api, problem.id, PNG, "image/png");
       assert.equal(put.status, 200);
-      assert.equal((await put.json()).problem.screenshot_bytes, PNG.length);
+      const stored = (await put.json()).problem;
 
-      const response = await api(`/api/leetcode/${problem.id}/screenshot`);
-      assert.equal(response.status, 200);
-      assert.equal(response.headers.get("content-type"), "image/png");
-      assert.equal(response.headers.get("content-disposition"), "inline");
-      assert.equal(
-        response.headers.get("cache-control"),
-        "private, no-cache",
-        "revalidate every time: the URL does not change when the image is replaced",
-      );
+      assert.equal(cloud.uploads.length, 1, "one upload, signed and server-side");
+      const [{ uri, options }] = cloud.uploads;
+      assert.ok(uri.startsWith("data:image/png;base64,"), "the declared type rides the upload");
+      assert.equal(options.resource_type, "image", "images only");
+      assert.equal(options.folder, "habit-tracker/leetcode");
+      assert.deepEqual(cloud.destroys, [], "there was nothing there to replace");
 
-      const served = Buffer.from(await response.arrayBuffer());
-      assert.ok(served.equals(PNG), "byte for byte what was uploaded");
+      assert.equal(stored.screenshot_public_id, `habit-tracker/leetcode/${options.public_id}`);
+      assert.equal(stored.screenshot_format, "png");
+      assert.equal(stored.screenshot_width, 1024);
+      assert.equal(stored.screenshot_height, 768);
+      assert.equal(stored.screenshot_bytes, 4097);
+
+      // The displayed image is a transformation of that one asset - resized and
+      // re-encoded at the CDN - and the link is the original. Two URLs over one
+      // stored file, which is the point of doing it this way.
+      assert.match(stored.screenshot_url, /^https:\/\/res\.cloudinary\.com\//);
+      // Cloudinary emits the components alphabetically, so this is one
+      // transformation segment rather than four things to find in a path.
+      assert.match(stored.screenshot_url, /\/c_limit,f_auto,q_auto,w_1600\//);
+      assert.ok(stored.screenshot_url.includes(stored.screenshot_public_id));
+
+      assert.match(stored.screenshot_full_url, /^https:\/\/res\.cloudinary\.com\//);
+      assert.doesNotMatch(stored.screenshot_full_url, /f_auto|c_limit/);
+    });
+  });
+
+  it("survives a reload: the list and the detail read say the same thing", async () => {
+    stubCloudinary();
+
+    await withApi(async ({ api }) => {
+      const problem = await create(api, SOLID);
+      const stored = (await upload(api, problem.id, PNG, "image/png")).json();
+      const saved = (await stored).problem;
+
+      // A fresh read is the client's refresh. Both scopes carry the URLs,
+      // because the index shows the same rows the detail pane does.
+      const again = await detail(api, problem.id);
+      assert.equal(again.screenshot_public_id, saved.screenshot_public_id);
+      assert.equal(again.screenshot_url, saved.screenshot_url);
+      assert.equal(again.screenshot_full_url, saved.screenshot_full_url);
+
+      const row = (await list(api)).find((one) => one.id === problem.id);
+      assert.equal(row.screenshot_url, saved.screenshot_url);
     });
   });
 
   it("takes a JPEG and a WebP too", async () => {
+    const cloud = stubCloudinary();
+
     await withApi(async ({ api }) => {
       const jpeg = await create(api, SOLID);
       assert.equal((await upload(api, jpeg.id, JPEG_SIGNATURE, "image/jpeg")).status, 200);
 
       const webp = await create(api, SOLID);
       assert.equal((await upload(api, webp.id, WEBP_SIGNATURE, "image/webp")).status, 200);
+
+      assert.deepEqual(
+        cloud.uploads.map(({ uri }) => uri.slice(5, uri.indexOf(";"))),
+        ["image/jpeg", "image/webp"],
+      );
     });
   });
 
-  it("is a 404 until there is one", async () => {
+  it("has no URLs until there is one", async () => {
     await withApi(async ({ api }) => {
       const problem = await create(api, SOLID);
-      assert.equal((await api(`/api/leetcode/${problem.id}/screenshot`)).status, 404);
-      assert.equal((await api("/api/leetcode/99999999/screenshot")).status, 404);
+      assert.equal(problem.screenshot_public_id, null);
+      assert.equal(problem.screenshot_url, null);
+      assert.equal(problem.screenshot_full_url, null);
+      assert.equal(problem.screenshot_bytes, null);
     });
   });
 
-  it("replaces the one that was there", async () => {
+  it("replaces the one that was there, and destroys it afterwards", async () => {
+    const cloud = stubCloudinary();
+
     await withApi(async ({ api }) => {
       const problem = await create(api, SOLID);
 
-      await upload(api, problem.id, PNG, "image/png");
-      await upload(api, problem.id, JPEG_SIGNATURE, "image/jpeg");
+      const first = (await (await upload(api, problem.id, PNG, "image/png")).json()).problem;
+      const second = (await (await upload(api, problem.id, PNG, "image/png")).json()).problem;
 
-      const response = await api(`/api/leetcode/${problem.id}/screenshot`);
-      assert.equal(response.headers.get("content-type"), "image/jpeg");
-      assert.equal((await detail(api, problem.id)).screenshot_bytes, JPEG_SIGNATURE.length);
+      assert.equal(cloud.uploads.length, 2);
+      assert.notEqual(second.screenshot_public_id, first.screenshot_public_id);
+      assert.notEqual(second.screenshot_url, first.screenshot_url, "a new URL, so no cache-bust");
+
+      assert.deepEqual(
+        cloud.destroys,
+        [first.screenshot_public_id],
+        "the old asset goes, and only after the row points at the new one",
+      );
+      assert.equal(
+        (await detail(api, problem.id)).screenshot_public_id,
+        second.screenshot_public_id,
+      );
     });
   });
 
   it("can be removed without removing the problem", async () => {
+    const cloud = stubCloudinary();
+
     await withApi(async ({ api }) => {
       const problem = await create(api, SOLID);
-      await upload(api, problem.id, PNG, "image/png");
+      const stored = (await (await upload(api, problem.id, PNG, "image/png")).json()).problem;
 
       const removed = await api(`/api/leetcode/${problem.id}/screenshot`, { method: "DELETE" });
       assert.equal(removed.status, 204);
+      assert.deepEqual(cloud.destroys, [stored.screenshot_public_id]);
 
-      assert.equal((await api(`/api/leetcode/${problem.id}/screenshot`)).status, 404);
-      assert.equal((await detail(api, problem.id)).screenshot_bytes, null);
-      assert.equal((await detail(api, problem.id)).title, "LRU Cache", "the problem is untouched");
+      const after = await detail(api, problem.id);
+      assert.equal(after.screenshot_public_id, null);
+      assert.equal(after.screenshot_url, null);
+      assert.equal(after.title, "LRU Cache", "the problem is untouched");
+
+      // Idempotent, and it does not ask Cloudinary to delete nothing.
+      assert.equal(
+        (await api(`/api/leetcode/${problem.id}/screenshot`, { method: "DELETE" })).status,
+        204,
+      );
+      assert.equal(cloud.destroys.length, 1);
+      assert.equal(
+        (await api("/api/leetcode/99999999/screenshot", { method: "DELETE" })).status,
+        404,
+      );
+    });
+  });
+
+  it("does not pretend to have deleted an asset Cloudinary refused", async () => {
+    const cloud = stubCloudinary({ destroy: () => ({ result: "not allowed" }) });
+
+    await withApi(async ({ api }) => {
+      const problem = await create(api, SOLID);
+      const stored = (await (await upload(api, problem.id, PNG, "image/png")).json()).problem;
+
+      const response = await api(`/api/leetcode/${problem.id}/screenshot`, { method: "DELETE" });
+      assert.equal(response.status, 502);
+      assert.equal(cloud.destroys.length, 1, "it was attempted");
+
+      // The row still points at the asset, because the asset is still there.
+      // Clearing it first would have lost the only reference to a file this app
+      // had just promised to remove.
+      assert.equal(
+        (await detail(api, problem.id)).screenshot_public_id,
+        stored.screenshot_public_id,
+      );
+    });
+  });
+
+  it("answers a failed upload with 502 and writes nothing", async () => {
+    const cloud = stubCloudinary({
+      upload: () => {
+        throw new Error("upstream is down");
+      },
+    });
+
+    await withApi(async ({ api }) => {
+      const problem = await create(api, SOLID);
+
+      const response = await upload(api, problem.id, PNG, "image/png");
+      assert.equal(response.status, 502);
+      assert.match((await response.json()).error, /could not be stored/i);
+
+      assert.equal((await detail(api, problem.id)).screenshot_public_id, null);
+      assert.deepEqual(cloud.destroys, [], "nothing was uploaded, so nothing leaked");
+    });
+  });
+
+  it("destroys the upload when the row lost its problem, rather than orphaning it", async () => {
+    // The problem is deleted while the upload is in flight, so the UPDATE
+    // matches nothing. It is the honest version of "the row write did not
+    // happen": a SQL failure would abort this test's own transaction, and the
+    // branch under test is the same one either way - the app still knows the id
+    // of what it just uploaded, and this is the last moment it does.
+    await withApi(async ({ api }) => {
+      const problem = await create(api, SOLID);
+
+      const cloud = stubCloudinary({
+        upload: async (nth) => {
+          await api(`/api/leetcode/${problem.id}`, { method: "DELETE" });
+          return {
+            public_id: `habit-tracker/leetcode/orphan-${nth}`,
+            format: "png",
+            width: 1024,
+            height: 768,
+            bytes: 4096,
+          };
+        },
+      });
+
+      const response = await upload(api, problem.id, PNG, "image/png");
+      assert.equal(response.status, 404, "there is no problem to attach it to");
+      assert.deepEqual(cloud.destroys, ["habit-tracker/leetcode/orphan-1"]);
     });
   });
 
   it("does not believe the Content-Type over the bytes", async () => {
+    const cloud = stubCloudinary();
+
     await withApi(async ({ api }) => {
       const problem = await create(api, SOLID);
 
-      // The header is a claim. This column is echoed back into a response
-      // Content-Type, so a file that is not what it says it is must not be
-      // stored as though it were.
+      // The header is a claim. Nothing reaches the media store until the bytes
+      // have agreed with it.
       const lying = await upload(api, problem.id, JPEG_SIGNATURE, "image/png");
       assert.equal(lying.status, 400);
 
       const notAnImage = await upload(api, problem.id, Buffer.from("<svg/>"), "image/png");
       assert.equal(notAnImage.status, 400);
 
+      assert.deepEqual(cloud.uploads, [], "refused before anything was uploaded");
       assert.equal(
-        (await detail(api, problem.id)).screenshot_bytes,
+        (await detail(api, problem.id)).screenshot_public_id,
         null,
         "and nothing was written on the way to being refused",
       );
@@ -589,26 +772,31 @@ describe("the screenshot", () => {
   });
 
   it("refuses a format it will not serve, and an empty body", async () => {
+    const cloud = stubCloudinary();
+
     await withApi(async ({ api }) => {
       const problem = await create(api, SOLID);
 
-      // SVG can carry script and this app serves the bytes from its own origin.
-      // It is refused at the parser, before a byte is buffered.
+      // SVG can carry script and ends up behind an <img> tag either way. It is
+      // refused at the parser, before a byte is buffered.
       for (const type of ["image/svg+xml", "image/gif", "application/pdf", "text/plain"]) {
         assert.equal((await upload(api, problem.id, PNG, type)).status, 400, type);
       }
 
       assert.equal((await upload(api, problem.id, Buffer.alloc(0), "image/png")).status, 400);
+      assert.deepEqual(cloud.uploads, []);
     });
   });
 
   it("answers a screenshot that is too big with 413, not a 500", async () => {
+    stubCloudinary();
+
     await withApi(async ({ api }) => {
       const problem = await create(api, SOLID);
 
       // A body-parser rejection is neither AppError nor ZodError. Without the
       // branch in error-handler.js it was logged as an unhandled bug and
-      // answered 500 — an incident report for a file someone dragged in.
+      // answered 500 - an incident report for a file someone dragged in.
       const huge = Buffer.concat([PNG, Buffer.alloc(6 * 1024 * 1024)]);
       const response = await upload(api, problem.id, huge, "image/png");
 
@@ -638,7 +826,6 @@ describe("the auth boundary", () => {
         ["GET", "/api/leetcode/1"],
         ["PATCH", "/api/leetcode/1"],
         ["DELETE", "/api/leetcode/1"],
-        ["GET", "/api/leetcode/1/screenshot"],
         ["PUT", "/api/leetcode/1/screenshot"],
         ["DELETE", "/api/leetcode/1/screenshot"],
       ]) {

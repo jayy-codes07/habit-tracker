@@ -179,11 +179,14 @@ describe("migration runner", () => {
     assert.deepEqual(
       rows.map((row) => row.table_name),
       [
+        "app_settings",
         "habit_logs",
         "habit_schedules",
         "habits",
         "journal",
         "leetcode_problems",
+        "push_subscriptions",
+        "reminder_deliveries",
         "schema_migrations",
         "tasks",
       ],

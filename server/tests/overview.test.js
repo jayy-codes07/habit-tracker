@@ -592,8 +592,9 @@ describe("GET /api/export", () => {
       assert.match(response.headers.get("content-disposition"), /attachment; filename=/);
 
       const body = await response.json();
-      // 3 since leetcode_problems joined the document — see the export controller.
-      assert.equal(body.version, 3);
+      // 5 since reminders: habits and tasks carry reminder_at, and the one
+      // settings row is a table in the document — see the export controller.
+      assert.equal(body.version, 5);
       assert.ok(body.exported_at);
       assert.equal(body.habits.length, 1);
       assert.equal(body.habit_schedules.length, 1);
@@ -601,6 +602,12 @@ describe("GET /api/export", () => {
       assert.equal(body.journal.length, 1);
       assert.equal(body.tasks.length, 1, "an archived task is still part of the backup");
       assert.equal(body.leetcode_problems.length, 1, "and so is an archived problem");
+      assert.equal(body.app_settings.length, 1, "the settings row is part of the backup");
+      assert.equal(
+        body.reminder_deliveries,
+        undefined,
+        "a week of dedupe state is not a record of anything",
+      );
     });
   });
 
@@ -618,27 +625,26 @@ describe("GET /api/export", () => {
   });
 
   /**
-   * The one thing in the database this file does not carry, and the omission is
-   * named rather than hidden. res.json() builds the whole document in memory, so
-   * a few hundred problem statements would be a backup that exhausts the heap;
-   * pg_dump is what carries the images, and README says so.
+   * The screenshot is a reference now, and a reference fits in a JSON document —
+   * which is why it moved out of the database. A restored row points at the same
+   * Cloudinary asset it always did, rather than at bytes only a pg_dump had.
    */
-  it("names a screenshot without inlining it", async () => {
+  it("carries the screenshot's asset reference, and no bytes", async () => {
     await withApi(async ({ api }) => {
-      const problem = await makeProblem({ title: "LRU Cache" });
-      await api(`/api/leetcode/${problem.id}/screenshot`, {
-        method: "PUT",
-        body: Buffer.from(
-          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
-          "base64",
-        ),
-        headers: { "content-type": "image/png" },
+      await makeProblem({
+        title: "LRU Cache",
+        screenshot_public_id: "habit-tracker/leetcode/abc",
+        screenshot_format: "png",
+        screenshot_width: 1024,
+        screenshot_height: 768,
+        screenshot_bytes: 4096,
       });
 
       const [exported] = (await getJson(api, "/api/export")).leetcode_problems;
-      assert.equal(exported.screenshot_type, "image/png", "a restore can see what is missing");
-      assert.ok(exported.screenshot_bytes > 0, "and how big it was");
-      assert.ok(!("screenshot" in exported), "but never the bytes themselves");
+      assert.equal(exported.screenshot_public_id, "habit-tracker/leetcode/abc");
+      assert.equal(exported.screenshot_format, "png");
+      assert.equal(exported.screenshot_bytes, 4096);
+      assert.ok(!("screenshot" in exported), "and nothing that is an image");
     });
   });
 });

@@ -1540,6 +1540,8 @@ interface ProblemRow {
   title: string;
   ai_assisted: boolean;
   reviewed_on: IsoDate | null;
+  screenshot_public_id: string | null;
+  screenshot_url: string | null;
   screenshot_bytes: number | null;
 }
 
@@ -1607,6 +1609,38 @@ async function pasteImage(page: Page) {
 }
 
 /**
+ * Whether this environment has a media store behind it.
+ *
+ * The bytes live in Cloudinary, and a checkout with no CLOUDINARY_* values —
+ * which is every checkout until someone fills them in — answers an upload with
+ * 503. That is a missing credential rather than a broken app, so the test below
+ * skips on it instead of failing and burying a real regression in noise. The
+ * probe is a real upload against a real row, because nothing else proves it.
+ */
+async function screenshotStorageReady(page: Page) {
+  const { id } = await makeProblem(page, "media store probe");
+
+  // Uploaded from inside the page rather than through page.request, because the
+  // bytes have to arrive as bytes — the API sniffs them — and decoding base64
+  // is what atob is for. Same origin, so the session cookie rides along.
+  const status = await page.evaluate(
+    async ({ problemId, base64 }: { problemId: string; base64: string }) => {
+      const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+      const response = await fetch(`/api/leetcode/${problemId}/screenshot`, {
+        method: "PUT",
+        headers: { "Content-Type": "image/png" },
+        body: bytes,
+      });
+      return response.status;
+    },
+    { problemId: id, base64: PNG_BASE64 },
+  );
+
+  await removeProblem(page, id);
+  return status !== 503;
+}
+
+/**
  * A screenshot held in the browser is a screenshot that is gone on the next
  * reload.
  *
@@ -1615,13 +1649,18 @@ async function pasteImage(page: Page) {
  * you paste. Then you come back three months later and every problem statement
  * is a broken image, which is the one thing the feature existed to prevent. So
  * this walks the real path: record, paste, save, reload, and then read the row
- * back through the API to prove the bytes are on the server rather than in a
- * tab that is about to be closed.
+ * back through the API to prove the image is in the media store rather than in
+ * a tab that is about to be closed.
  */
 test("a pasted screenshot survives a reload and stays with its problem", async ({ page }) => {
   await signIn(page);
 
   try {
+    test.skip(
+      !(await screenshotStorageReady(page)),
+      "no CLOUDINARY_* credentials in this environment",
+    );
+
     await page.goto("/leetcode");
     await loaded(page);
     await page.getByRole("button", { name: "Record a problem" }).click();
@@ -1655,11 +1694,20 @@ test("a pasted screenshot survives a reload and stays with its problem", async (
     await expect(plate, "and it is still there afterwards").toBeVisible();
 
     const [saved] = await problemsNamed(page);
-    expect(saved?.screenshot_bytes, "the bytes are stored against the row").toBeGreaterThan(0);
+    expect(saved?.screenshot_public_id, "the row names the stored asset").toBeTruthy();
+    expect(saved?.screenshot_bytes, "and how big it is").toBeGreaterThan(0);
 
-    const served = await page.request.fetch(`/api/leetcode/${saved?.id}/screenshot`);
-    expect(served.status(), "and come back from the row's own endpoint").toBe(200);
-    expect(served.headers()["content-type"], "as what they are").toBe("image/png");
+    // What the plate actually paints: a Cloudinary transformation of that one
+    // asset, which is the whole reason nothing here resizes an image itself.
+    expect(saved?.screenshot_url).toContain("res.cloudinary.com");
+    expect(saved?.screenshot_url).toContain("c_limit,f_auto,q_auto,w_1600");
+    expect(await plate.getAttribute("src"), "and that is the URL on the page").toBe(
+      saved?.screenshot_url,
+    );
+
+    const served = await page.request.fetch(saved?.screenshot_url ?? "");
+    expect(served.status(), "which the browser can actually fetch").toBe(200);
+    expect(served.headers()["content-type"], "as an image").toMatch(/^image\//);
   } finally {
     await sweepProblems(page);
   }

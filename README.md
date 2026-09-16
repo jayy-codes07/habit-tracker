@@ -28,6 +28,12 @@ npm run hash-password                                 # prints AUTH_PASSWORD_HAS
 node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"  # SESSION_SECRET
 ```
 
+LeetCode screenshots are stored in Cloudinary, so a workspace that uses them also needs
+`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` in `.env` (dashboard →
+Settings → API Keys). Every upload and delete is signed and made by the server; the browser only
+ever fetches an image URL, and the secret never leaves the API. Without them the app runs normally
+and only the screenshot upload answers 503.
+
 `.env` is gitignored and must never be committed.
 
 ## Development
@@ -217,6 +223,100 @@ absence rather than as failure.
 A habit log is `done`, `missed` or `skipped`; no row at all means the day was
 never logged, which is a distinct state from any of them.
 
+## Backup and restore
+
+Settings, at the foot of **Habits**. Two controls: **Download backup** and
+**Restore backup**.
+
+### The format
+
+One JSON object, `GET /api/export`, downloaded as `habit-tracker-<date>.json`:
+
+```json
+{
+  "version": 5,
+  "exported_at": "2026-09-16T08:41:02.113Z",
+  "habits": [...],
+  "habit_schedules": [...],
+  "habit_logs": [...],
+  "tasks": [...],
+  "journal": [...],
+  "leetcode_problems": [...],
+  "app_settings": [...]
+}
+```
+
+It is **raw rows** — the columns as the database holds them, ids and timestamps
+included, one array per table, nothing derived and nothing reshaped. Streaks,
+consistency and the review queue are all recomputed on every read, so a backup
+that carried them would only carry a second opinion that could go stale. A lost
+row, on the other hand, is lost.
+
+Archived habits, archived tasks and archived problems are in the file. So are
+paused schedule versions, skipped days, notes, completion times, reminder times
+and the single `app_settings` row — everything needed to bring the app back up
+exactly as it was, with nothing to set up again by hand.
+
+Two tables are deliberately **not** in it. `reminder_deliveries` is a week of
+"already shown on this device" dedupe state, not a record of anything that
+happened to you. `push_subscriptions` is what a particular browser is, not what
+the record is.
+
+`version` is the format, and it is checked on the way back in. The restore
+accepts version **5** and refuses anything else by number rather than guessing
+at it.
+
+### Restoring
+
+`POST /api/import/check` validates a file and reports what it holds, writing
+nothing. That summary — 7 habits, 412 logged days, 31 problems, and the date the
+backup was taken — is what the dialog asks you to confirm. Only then does
+`POST /api/import` run.
+
+The restore **replaces everything**. It is not a merge: there is one user and
+one database, and a merge would mean inventing an identity for every row and a
+rule for every conflict. Ids are preserved exactly, so a schedule version stays
+attached to its habit and a log to its day, and the identity sequences are
+advanced past the restored ids so the next habit you create cannot collide with
+one from the file.
+
+The delete and every insert are **one transaction**. A row Postgres refuses —
+a hand-edited file, a log pointing at a habit that is not in it — takes the
+whole restore down with it and leaves the database exactly as it was. Validation
+runs before any of it: a backup is what you reach for when something has already
+gone wrong, and an import that failed halfway would be the second disaster in
+one afternoon.
+
+### Cloudinary: the one limitation
+
+LeetCode screenshots are **not in the backup**. The bytes live in Cloudinary and
+the database holds only `screenshot_public_id` plus the format, dimensions and
+size; the display URLs are derived from the public id on every read. Downloading
+every image into the JSON would defeat the reason the column moved out of
+Postgres in the first place — `res.json()` builds the whole document in memory,
+and a few hundred embedded images is a backup that exhausts the heap.
+
+What the file carries is the **reference**, and a restore puts it back untouched.
+So:
+
+- Restored into an app pointed at the **same Cloudinary account**, every
+  screenshot appears again exactly as before. This is the normal case.
+- Restored into an app pointed at a **different or empty** Cloudinary account,
+  the LeetCode rows are still complete and internally valid — title, difficulty,
+  topics, approach, solution, review state — and their screenshot plates will
+  fail to load, because the asset is not there. Nothing is silently invented:
+  the confirmation dialog says how many problems reference an image before you
+  restore, and the row still knows which asset it wants, so re-pointing the app
+  at the original account brings the images back.
+- The images themselves are backed up **in Cloudinary**, which is what a media
+  store is for. If you want a local copy, download the assets from the
+  Cloudinary console; there is no mechanism here for it, because one would mean
+  a second store to keep in step with the first for a case that has not happened.
+
+A restore never deletes anything in Cloudinary. Assets belonging to problems the
+restore replaced are left in place rather than destroyed on the strength of a
+file someone just uploaded.
+
 ## API
 
 | Route | Auth | Purpose |
@@ -267,6 +367,8 @@ a `DELETE`.
 | `GET /api/grid?end=&weeks=` | the consistency grid; `weeks` 1-53, default 12, `end` defaults to today |
 | `GET /api/review/:yyyy-mm` | per-habit consistency and streaks, task counts, the month's journal |
 | `GET /api/export` | every table as one JSON file, archived rows included |
+| `POST /api/import/check` | validate a backup and report what it holds; writes nothing |
+| `POST /api/import` | replace everything with a backup, in one transaction |
 
 `/api/day` and `/api/grid` are deliberately fat: a phone should paint a screen from one request,
 not five.

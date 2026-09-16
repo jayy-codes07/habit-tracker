@@ -61,8 +61,15 @@ const HAS_TARGETS = `EXISTS (SELECT 1 FROM habit_schedules s
  */
 const UNIT_LOCKED = `(h.unit IS NOT NULL AND (${HAS_VALUES} OR ${HAS_TARGETS})) AS unit_locked`;
 
+/**
+ * The reminder time as 'HH:MM'. Postgres renders a `time` as 'HH:MM:SS' and the
+ * seconds are always zero — an <input type="time"> neither shows nor sends
+ * them — so it is formatted here rather than sliced in three presenters.
+ */
+const REMINDER_AT = `to_char(h.reminder_at, 'HH24:MI') AS reminder_at`;
+
 const HABIT_COLUMNS = `h.id, h.name, h.color_token, h.sort_order, h.start_date, h.unit,
-                       h.archived_at, ${ARCHIVED_ON}, ${UNIT_LOCKED}`;
+                       h.archived_at, ${ARCHIVED_ON}, ${UNIT_LOCKED}, ${REMINDER_AT}`;
 
 // ---------------------------------------------------------------------------
 // Reads
@@ -311,13 +318,20 @@ export function createHabit({ name, colorToken, startDate, unit, schedule }) {
  * something back would suggest. Coming back at the end is also the honest
  * reading: the list is a running order of what you are tracking now.
  */
-export async function updateHabit(id, { name, colorToken, archived, unit, unitGiven = false }) {
+export async function updateHabit(
+  id,
+  { name, colorToken, archived, unit, unitGiven = false, reminderAt, reminderGiven = false },
+) {
   const { rows } = await query(
     `WITH updated AS (
        UPDATE habits h
           SET name        = COALESCE($3, h.name),
               color_token = COALESCE($4, h.color_token),
               unit        = CASE WHEN $6::boolean THEN $7 ELSE h.unit END,
+              -- Its own "was it sent" flag for the reason unit has one: NULL is
+              -- a real value here and means "no reminder", so COALESCE cannot
+              -- tell clearing it from leaving it alone.
+              reminder_at = CASE WHEN $8::boolean THEN $9::time ELSE h.reminder_at END,
               archived_at = CASE
                 WHEN $5::boolean IS NULL THEN h.archived_at
                 -- Re-archiving keeps the original moment; it is not a new event.
@@ -361,7 +375,17 @@ export async function updateHabit(id, { name, colorToken, archived, unit, unitGi
           AND s.target_value IS NOT NULL
      )
      SELECT * FROM updated`,
-    [config.timezone, id, name ?? null, colorToken ?? null, archived ?? null, unitGiven, unit],
+    [
+      config.timezone,
+      id,
+      name ?? null,
+      colorToken ?? null,
+      archived ?? null,
+      unitGiven,
+      unit,
+      reminderGiven,
+      reminderAt ?? null,
+    ],
   );
 
   if (rows.length > 0) return rows[0];

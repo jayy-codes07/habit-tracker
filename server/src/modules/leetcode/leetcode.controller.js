@@ -14,7 +14,7 @@
 import { z } from "zod";
 
 import { today } from "../../lib/dates.js";
-import { badRequest, notFound } from "../../lib/errors.js";
+import { badRequest } from "../../lib/errors.js";
 import { idParam, isoDate } from "../../lib/schemas.js";
 import * as leetcode from "./leetcode.service.js";
 
@@ -133,31 +133,6 @@ export async function update(req, res) {
 }
 
 /**
- * The stored image, straight back.
- *
- * `res.send(buffer)` generates the ETag and answers a conditional request with
- * 304 on its own, so this costs nothing on a revisit. The Cache-Control is
- * `no-cache` rather than a max-age — not "do not cache", but "revalidate every
- * time": the URL never changes when a screenshot is replaced, so a heuristically
- * cached copy would keep showing the old image with no way to ask for the new
- * one. Revalidation is a 304 in the common case.
- *
- * `private` because one person's study notes are not something a shared proxy
- * should hold. `inline` because this is a picture in a page, never a download.
- */
-export async function getScreenshot(req, res) {
-  const id = idParam.parse(req.params.id);
-
-  const shot = await leetcode.loadScreenshot(id);
-  if (shot === null) throw notFound("No screenshot for that problem");
-
-  res.type(shot.screenshot_type);
-  res.set("Cache-Control", "private, no-cache");
-  res.set("Content-Disposition", "inline");
-  res.send(shot.screenshot);
-}
-
-/**
  * The upload, as raw bytes rather than multipart.
  *
  * A single-file body needs no form encoding, and skipping it means no multipart
@@ -168,7 +143,8 @@ export async function getScreenshot(req, res) {
  *
  * express.raw only produces a Buffer when the Content-Type matched its allowed
  * list, so anything else arrives as an empty object and is refused here. The
- * service then checks the bytes themselves against the declared type.
+ * service then checks the bytes themselves against the declared type, and only
+ * then do they leave this process for the media store.
  */
 export async function putScreenshot(req, res) {
   const id = idParam.parse(req.params.id);

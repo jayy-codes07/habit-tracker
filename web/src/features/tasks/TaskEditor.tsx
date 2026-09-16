@@ -30,12 +30,18 @@ export function TaskEditor({
 }) {
   const [title, setTitle] = useState(task.title);
   const [due, setDue] = useState<IsoDate | "">(task.due_date ?? "");
+  // "" is no reminder, and an undated task can have none at all — the server
+  // clears it with the date, so the field goes with it rather than pretending.
+  const [reminder, setReminder] = useState(task.reminder_at ?? "");
 
   const patch = usePatchTask();
 
   const trimmed = title.trim();
   const nextDue = due === "" ? null : due;
-  const changed = trimmed !== task.title || nextDue !== task.due_date;
+  // Dropping the date drops the reminder with it, here as on the server.
+  const nextReminder = nextDue === null || reminder === "" ? null : reminder;
+  const changed =
+    trimmed !== task.title || nextDue !== task.due_date || nextReminder !== task.reminder_at;
 
   const save = () =>
     patch.mutate(
@@ -46,6 +52,7 @@ export function TaskEditor({
           // Always sent when it changed, null included — that is how the API is
           // told to clear it rather than leave it.
           ...(nextDue !== task.due_date ? { due_date: nextDue } : {}),
+          ...(nextReminder !== task.reminder_at ? { reminder_at: nextReminder } : {}),
         },
       },
       { onSuccess: onClose },
@@ -95,6 +102,40 @@ export function TaskEditor({
               : "A date is when you meant to do it. It is never rewritten for you."}
           </p>
         </div>
+
+        {/* Only for a dated task. An undated one waits under Anytime and is
+            never overdue, so there is no day a reminder could belong to —
+            offering the field and then dropping what it holds would be worse
+            than not offering it. */}
+        {due !== "" && (
+          <div>
+            <label htmlFor="task-reminder" className="label text-muted block pb-2.5">
+              Reminder (optional)
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="task-reminder"
+                type="time"
+                value={reminder}
+                onChange={(event) => setReminder(event.target.value)}
+                className={FIELD}
+              />
+              {reminder !== "" && (
+                <button
+                  type="button"
+                  onClick={() => setReminder("")}
+                  className="label min-h-12 shrink-0 px-2 underline decoration-[var(--c-baseline)] underline-offset-[6px]"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <p className="text-meta text-muted mt-1.5">
+              Once, on the day it is due, and only while it is still open. It is not repeated after
+              the day has passed — the date is never rewritten for you.
+            </p>
+          </div>
+        )}
 
         {patch.isError && (
           <p role="alert" className="text-warn text-meta">

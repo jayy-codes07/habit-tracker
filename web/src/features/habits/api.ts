@@ -5,6 +5,7 @@
  */
 import { send, sendJson, request } from "../../lib/api-client";
 import type {
+  ClockTime,
   Habit,
   HistoryPayload,
   Id,
@@ -34,7 +35,14 @@ export const createHabit = (body: {
  */
 export const patchHabit = (
   id: Id,
-  patch: { name?: string; color_token?: string; archived?: boolean; unit?: string | null },
+  patch: {
+    name?: string;
+    color_token?: string;
+    archived?: boolean;
+    unit?: string | null;
+    /** Null turns the reminder off; omitting it leaves it alone. */
+    reminder_at?: ClockTime | null;
+  },
 ) => sendJson<{ habit: Habit }>("PATCH", `/habits/${id}`, patch);
 
 /**

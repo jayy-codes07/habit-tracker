@@ -52,15 +52,13 @@ export const createProblem = (input: ProblemInput) =>
 export const patchProblem = (id: Id, patch: ProblemPatch) =>
   sendJson<{ problem: Problem }>("PATCH", `/leetcode/${id}`, patch);
 
-/**
- * Where the screenshot lives, as a URL rather than as data.
- *
- * request() always parses the response as JSON, so no endpoint in this app can
- * hand back bytes — and none should here. The browser fetches the image itself
- * from a same-origin path, which is what makes it survive a refresh, cost
- * nothing to re-render, and stay inside helmet's `img-src 'self'`.
+/*
+ * There is no screenshotUrl() any more. The image is served from Cloudinary and
+ * the row carries the two URLs it is served from — `screenshot_url`, a CDN
+ * transformation for display, and `screenshot_full_url`, the original. Building
+ * either here would mean this client knowing the cloud name and the transform,
+ * which are the server's to change.
  */
-export const screenshotUrl = (id: Id) => `/api/leetcode/${id}/screenshot`;
 
 /**
  * The upload, as the file itself rather than a form or a base64 string.

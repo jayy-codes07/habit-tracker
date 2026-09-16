@@ -4,7 +4,6 @@ import {
   create,
   deleteScreenshot,
   detail,
-  getScreenshot,
   list,
   putScreenshot,
   remove,
@@ -39,7 +38,11 @@ export function createLeetcodeRouter() {
   // deleteProblem.
   router.delete("/:id", remove);
 
-  router.get("/:id/screenshot", getScreenshot);
+  // There is no GET for a screenshot. The bytes live in Cloudinary and the row
+  // carries the URLs they are served from, so proxying them back through this
+  // process would be a second copy of every image on the wire, and a cache
+  // nobody asked for.
+  //
   // Raw bytes, not multipart — see putScreenshot. The parser is mounted here
   // rather than globally so no other route can be handed a Buffer body.
   router.put(

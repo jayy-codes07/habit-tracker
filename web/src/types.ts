@@ -17,6 +17,13 @@ export type IsoDate = string;
 /** "YYYY-MM". */
 export type IsoMonth = string;
 
+/**
+ * A wall-clock time, "HH:MM", in APP_TIMEZONE — never an instant and never the
+ * browser's zone. Like an ISO date, these compare correctly with < and <=,
+ * which is the whole of the quiet-hours arithmetic.
+ */
+export type ClockTime = string;
+
 /** habits.color_token — a theme token, never a hex value. */
 export type ColorToken = "chart-1" | "chart-2" | "chart-3" | "chart-4" | "chart-5";
 
@@ -123,6 +130,15 @@ export interface Habit {
    * force are different claims.
    */
   next_schedule: Schedule | null;
+  /**
+   * The wall-clock time this habit is reminded at in APP_TIMEZONE, or null.
+   *
+   * It is not a promise that anything will arrive: the master switch, quiet
+   * hours, a pause, an archive and a day the habit is not scheduled on all
+   * suppress it, and none of those are knowable from here. See
+   * features/notifications.
+   */
+  reminder_at: ClockTime | null;
 }
 
 /**
@@ -185,6 +201,12 @@ export interface Task {
    * the app's own for anyone not living on Greenwich.
    */
   archived_on?: IsoDate;
+  /**
+   * The wall-clock time this task is reminded at, or null. Only a dated task
+   * can hold one — clearing the due date clears this in the same write, and the
+   * response says so.
+   */
+  reminder_at: ClockTime | null;
 }
 
 /** GET /api/tasks — every scope answers with this shape. */
@@ -422,10 +444,27 @@ export interface Problem {
   /** The day I went back over it, or null — which is a queue, not a failure. */
   reviewed_on: IsoDate | null;
   /**
-   * The size of the stored screenshot, or null when there is none. It stands in
-   * for "is there one": the bytes are never in a JSON payload, and asking the
-   * question any other way would mean fetching the image to find out.
+   * The screenshot, as a reference rather than as data.
+   *
+   * The bytes live in Cloudinary; the database holds the asset id and these
+   * facts about it. `screenshot_url` is a TRANSFORMATION of that asset — resized
+   * and re-encoded at the CDN, never a second file this app generated — and
+   * `screenshot_full_url` is the original, for the "opens full size" link.
+   *
+   * Both are derived on the server from the public_id on every read, so neither
+   * can go stale, and both are null together with it. Test presence with
+   * `screenshot_url`, never with `screenshot_bytes`.
+   *
+   * The URL changes on every upload, because each one gets a fresh public_id.
+   * That is what makes a replacement appear at once with no cache-busting.
    */
+  screenshot_public_id: string | null;
+  screenshot_url: string | null;
+  screenshot_full_url: string | null;
+  /** 'png' | 'jpg' | 'webp' as Cloudinary stored it, and the original pixels. */
+  screenshot_format: string | null;
+  screenshot_width: number | null;
+  screenshot_height: number | null;
   screenshot_bytes: number | null;
   created_at: string;
   updated_at: string;
@@ -546,4 +585,81 @@ export interface ComparePayload {
   month: IsoMonth;
   current: MonthFacts;
   previous: MonthFacts;
+}
+
+// ---------------------------------------------------------------------------
+// Reminders
+// ---------------------------------------------------------------------------
+
+/**
+ * GET/PATCH /api/reminders — the app-wide half of the reminder settings.
+ *
+ * The per-thing half lives on the things themselves: a habit's and a task's
+ * `reminder_at`. There is no reminder object anywhere, on either side of the
+ * wire, and adding one would be the generic event system this feature is not.
+ *
+ * `quiet_start` and `quiet_end` are both set or both null — the server refuses
+ * half a window — and the pair may run overnight, so quiet_start > quiet_end is
+ * normal and means "22:30 until 07:30 the next morning".
+ */
+export interface ReminderSettings {
+  notifications_enabled: boolean;
+  habit_reminders: boolean;
+  task_reminders: boolean;
+  /** Null is off. There is no separate flag; a time is the switch. */
+  leetcode_reminder_at: ClockTime | null;
+  quiet_start: ClockTime | null;
+  quiet_end: ClockTime | null;
+}
+
+/**
+ * GET /api/reminders — the settings, plus what a browser needs to subscribe.
+ *
+ * `push_public_key` is the VAPID PUBLIC key and belongs in a payload: it is
+ * what `pushManager.subscribe()` signs the subscription to, and the push
+ * service checks every send against it. The private half is server-side only.
+ * Null when this deployment has no keys, which is also what
+ * `push_configured: false` says — the interface can then be honest rather than
+ * offering a switch that does nothing.
+ *
+ * There is no payload for a reminder itself. The server pushes those to the
+ * service worker; nothing in the app fetches one.
+ */
+export interface ReminderSettingsPayload {
+  settings: ReminderSettings;
+  push_configured: boolean;
+  push_public_key: string | null;
+}
+
+/**
+ * POST /api/import/check — what a backup file holds, as the server reads it.
+ *
+ * The counts come from the server rather than from counting the arrays here on
+ * purpose: this is the summary a person confirms against, and it has to be the
+ * opinion of the thing that will do the restoring.
+ *
+ * `screenshots` is separated out from the LeetCode count because it is the one
+ * number in the file that is a reference rather than a value — those images
+ * live in Cloudinary and are not in the backup.
+ */
+export interface BackupSummary {
+  version: number;
+  exported_at: string;
+  counts: {
+    habits: number;
+    habit_schedules: number;
+    habit_logs: number;
+    tasks: number;
+    journal: number;
+    leetcode_problems: number;
+    app_settings: number;
+  };
+  screenshots: number;
+}
+
+/** POST /api/import — what actually went in. */
+export interface RestoreResult {
+  restored: BackupSummary["counts"];
+  exported_at: string;
+  screenshots: number;
 }

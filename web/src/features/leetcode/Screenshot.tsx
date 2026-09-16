@@ -12,10 +12,13 @@
  * Full size is a plain link to the image, opened in a new tab. The browser
  * already does zoom, pan, save and print better than a lightbox would, and a
  * hand-built one is a keyboard trap waiting to be written.
+ *
+ * The bytes are in Cloudinary and the row carries both URLs: `screenshot_url`
+ * is a CDN transformation for display, `screenshot_full_url` the original
+ * behind the link. Neither is built here — see api.ts.
  */
 import { useRef, useState } from "react";
 
-import { screenshotUrl } from "./api";
 import { formatBytes, usePastedImage } from "./problems";
 import { useDeleteScreenshot, useSetScreenshot } from "./queries";
 import { QUIET } from "../../components/form";
@@ -114,25 +117,30 @@ export function Screenshot({
 
   return (
     <div>
-      {problem.screenshot_bytes === null ? (
+      {problem.screenshot_url === null ? (
         <Empty onFile={upload} busy={busy} hint="Paste a screenshot with Ctrl+V" />
       ) : (
         <>
           <a
-            href={screenshotUrl(problem.id)}
+            href={problem.screenshot_full_url ?? problem.screenshot_url}
             target="_blank"
             rel="noreferrer"
             className="border-tray hover:border-baseline focus-visible:outline-ink block border transition-colors focus-visible:outline-2 focus-visible:outline-offset-2"
           >
             <img
               /*
-               * Keyed on the row's own updated_at because the URL does not
-               * change when a screenshot is replaced. Without it the element
-               * keeps the image it already decoded and a replacement looks like
-               * an upload that silently failed.
+               * No key and no cache-buster: every upload gets a fresh public_id,
+               * so a replacement is a different URL and the element reloads
+               * because it has to. The old version of this had to be keyed on
+               * updated_at, because the address never changed.
+               *
+               * The intrinsic size is the ORIGINAL's, which is the ratio the
+               * transformation preserves — so the space is reserved correctly
+               * before a byte of image arrives.
                */
-              key={problem.updated_at}
-              src={screenshotUrl(problem.id)}
+              src={problem.screenshot_url}
+              width={problem.screenshot_width ?? undefined}
+              height={problem.screenshot_height ?? undefined}
               alt={`Problem statement for ${problem.number === null ? problem.title : `#${problem.number} ${problem.title}`}`}
               className="block w-full"
             />
@@ -140,7 +148,7 @@ export function Screenshot({
 
           <div className="mt-2 flex flex-wrap items-center gap-x-4">
             <p className="label text-muted">
-              {busy ? "Saving…" : `${formatBytes(problem.screenshot_bytes)} · opens full size`}
+              {busy ? "Saving…" : `${formatBytes(problem.screenshot_bytes ?? 0)} · opens full size`}
             </p>
             <span className="flex-1" />
             <label className="shrink-0">

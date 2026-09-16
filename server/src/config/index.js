@@ -69,6 +69,43 @@ export const config = {
     ttlDays: Number(process.env.SESSION_TTL_DAYS ?? 30),
   },
 
+  // The media store for LeetCode screenshots. Read, not required, here: the
+  // rest of the app - and db:migrate and db:seed - run perfectly well without
+  // it, so the two calls that need the service check assertConfigured()
+  // instead. The secret is server-side only and never reaches a payload.
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME ?? "",
+    apiKey: process.env.CLOUDINARY_API_KEY ?? "",
+    apiSecret: process.env.CLOUDINARY_API_SECRET ?? "",
+  },
+
+  /*
+   * Web Push. The public key is the one value here that is MEANT to reach the
+   * browser — the page passes it to pushManager.subscribe as the application
+   * server key, and the push service checks every send against it. The private
+   * key signs those sends and never leaves this process.
+   *
+   * Read, not required, like Cloudinary's: the app runs perfectly well with no
+   * keys, it simply cannot push. pushConfigured() is what the one call that
+   * needs them checks, so a deployment without them fails at nothing.
+   *
+   * The subject is a contact the push service can use if a send misbehaves —
+   * a mailto: or an https: URL, and required by the VAPID spec.
+   */
+  vapid: {
+    publicKey: process.env.VAPID_PUBLIC_KEY ?? "",
+    privateKey: process.env.VAPID_PRIVATE_KEY ?? "",
+    subject: process.env.VAPID_SUBJECT ?? "mailto:admin@example.com",
+  },
+
+  /*
+   * How often the server looks for reminders that have come due, in seconds.
+   * A minute is the resolution a reminder time is set at, so checking faster
+   * buys nothing; it is a knob because a deployment paying per wake-up may want
+   * it slower, and because a bad value should be tunable without an edit.
+   */
+  reminderTickSeconds: Number(process.env.REMINDER_TICK_SECONDS ?? 60),
+
   // Where the built SPA lands. Absent until the frontend exists, which is fine:
   // the server serves the API alone until then.
   webDistPath: resolve(paths.repo, process.env.WEB_DIST_PATH ?? "web/dist"),

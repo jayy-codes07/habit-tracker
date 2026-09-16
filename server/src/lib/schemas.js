@@ -43,3 +43,15 @@ export const isoDate = z.string().refine(isIsoDate, "must be a date as YYYY-MM-D
 
 /** A month, as YYYY-MM. Monthly journal entries and the monthly review use it. */
 export const isoMonth = z.string().refine(isIsoMonth, "must be a month as YYYY-MM");
+
+/**
+ * A wall-clock time of day, 'HH:MM'. Reminders are stored in APP_TIMEZONE's
+ * wall clock, never as an instant, so this is the whole of what a client sends.
+ *
+ * Cross-module because three of them take one: a habit's, a task's, and the
+ * LeetCode review reminder on the settings row. Seconds are refused rather than
+ * truncated — Postgres would accept '08:30:17' into a `time` column and then
+ * hand it back, and a reminder at seventeen seconds past is a thing nobody
+ * asked for that the interface cannot even display.
+ */
+export const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "must be a time as HH:MM");

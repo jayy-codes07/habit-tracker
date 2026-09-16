@@ -25,6 +25,13 @@ export default tseslint.config(
     files: ["scripts/**/*.{js,mjs}"],
     languageOptions: { globals: globals.node },
   },
+  // The service worker is neither a browser page nor Node: `self` is its global
+  // and `window` does not exist in it. globals.serviceworker is exactly that
+  // environment, and it is the only file in public/ with any code in it.
+  {
+    files: ["public/sw.js"],
+    languageOptions: { globals: globals.serviceworker },
+  },
   // The Playwright suite is Node too, and exports no components.
   {
     files: ["e2e/**/*.ts", "playwright.config.ts"],

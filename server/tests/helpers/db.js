@@ -254,12 +254,15 @@ export async function makeProblem(overrides = {}) {
     reviewed_on: null,
     approach: null,
     solution: null,
-    // The three screenshot columns are exposed so a fixture can describe a
-    // problem that has one — and so the constraint suite can attempt the
-    // combinations the API refuses to build, which is the only way to prove the
-    // database refuses them too.
-    screenshot: null,
-    screenshot_type: null,
+    // The screenshot columns are exposed so a fixture can describe a problem
+    // that has one — and so the constraint suite can attempt the combinations
+    // the API refuses to build, which is the only way to prove the database
+    // refuses them too. They are a reference to a Cloudinary asset now; no
+    // fixture here puts anything in Cloudinary.
+    screenshot_public_id: null,
+    screenshot_format: null,
+    screenshot_width: null,
+    screenshot_height: null,
     screenshot_bytes: null,
     archived_at: null,
     ...overrides,
@@ -268,8 +271,9 @@ export async function makeProblem(overrides = {}) {
   const { rows } = await query(
     `INSERT INTO leetcode_problems
        (number, title, difficulty, topics, url, solved_on, ai_assisted, reviewed_on,
-        approach, solution, screenshot, screenshot_type, screenshot_bytes, archived_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        approach, solution, screenshot_public_id, screenshot_format,
+        screenshot_width, screenshot_height, screenshot_bytes, archived_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
      RETURNING *`,
     [
       row.number,
@@ -282,8 +286,10 @@ export async function makeProblem(overrides = {}) {
       row.reviewed_on,
       row.approach,
       row.solution,
-      row.screenshot,
-      row.screenshot_type,
+      row.screenshot_public_id,
+      row.screenshot_format,
+      row.screenshot_width,
+      row.screenshot_height,
       row.screenshot_bytes,
       row.archived_at,
     ],

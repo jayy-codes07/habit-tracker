@@ -10,3 +10,17 @@
 import { resolveTestDatabaseUrl } from "./database-url.js";
 
 process.env.DATABASE_URL = resolveTestDatabaseUrl();
+
+/*
+ * Cloudinary, configured with values that are deliberately not an account.
+ *
+ * The tests never reach the network: leetcode.test.js replaces the SDK's
+ * uploader with a fake and asserts on what the app did with the answer. What
+ * these three do is get past assertConfigured(), which is the guard that keeps
+ * a credential-less deployment from failing at the first upload instead of at
+ * the first request — so the test run must set them the same way a real
+ * environment does, rather than the app having a test mode.
+ */
+process.env.CLOUDINARY_CLOUD_NAME = "test-cloud";
+process.env.CLOUDINARY_API_KEY = "test-key";
+process.env.CLOUDINARY_API_SECRET = "test-secret";

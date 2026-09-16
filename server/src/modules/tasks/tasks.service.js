@@ -16,7 +16,10 @@ import { config } from "../../config/index.js";
 import { query } from "../../db/index.js";
 import { notFound } from "../../lib/errors.js";
 
-const COLUMNS = "id, title, due_date, completed, completed_at, created_at, archived_at";
+// to_char rather than the raw `time`: Postgres renders it 'HH:MM:SS' and the
+// seconds are always zero, so the API speaks 'HH:MM' — see habits.service.js.
+const COLUMNS = `id, title, due_date, completed, completed_at, created_at, archived_at,
+                 to_char(reminder_at, 'HH24:MI') AS reminder_at`;
 
 /**
  * archived_at is an instant; a recovery list wants the calendar day it fell on,
@@ -92,10 +95,11 @@ export async function loadTasksForDay(date) {
 
 const strip = ({ overdue: _overdue, ...task }) => task;
 
-export async function createTask({ title, dueDate }) {
+export async function createTask({ title, dueDate, reminderAt = null }) {
   const { rows } = await query(
-    `INSERT INTO tasks (title, due_date) VALUES ($1, $2) RETURNING ${COLUMNS}`,
-    [title, dueDate ?? null],
+    `INSERT INTO tasks (title, due_date, reminder_at) VALUES ($1, $2, $3::time) RETURNING ${COLUMNS}`,
+    // Same rule as updateTask: no date, no reminder. The response says so.
+    [title, dueDate ?? null, dueDate ? (reminderAt ?? null) : null],
   );
   return rows[0];
 }
@@ -110,11 +114,33 @@ export async function createTask({ title, dueDate }) {
  * due_date is the one nullable field, so it needs a separate "was it sent at
  * all" flag: COALESCE cannot tell "leave it alone" from "clear it".
  */
-export async function updateTask(id, { title, dueDate, dueDateGiven, completed, archived }) {
+export async function updateTask(
+  id,
+  { title, dueDate, dueDateGiven, completed, archived, reminderAt, reminderGiven = false },
+) {
   const { rows } = await query(
     `UPDATE tasks
         SET title    = COALESCE($2, title),
             due_date = CASE WHEN $3::boolean THEN $4::date ELSE due_date END,
+            /*
+             * An undated task cannot carry a reminder — tasks_reminder_needs_date
+             * — so the reminder is decided against the due date this statement
+             * is LEAVING BEHIND, not the one it found. Clearing the date clears
+             * the reminder in the same statement; setting a reminder on a task
+             * that ends up undated stores none.
+             *
+             * Without this the obvious edit — remove the due date — is a
+             * constraint violation, which carries no status and so becomes a
+             * 500 for a perfectly reasonable request. Nothing is dropped
+             * silently: the response carries the reminder that was actually
+             * stored, so a client that asked for the impossible pair can see
+             * it did not get it.
+             */
+            reminder_at = CASE
+              WHEN (CASE WHEN $3::boolean THEN $4::date ELSE due_date END) IS NULL THEN NULL
+              WHEN $7::boolean THEN $8::time
+              ELSE reminder_at
+            END,
             completed = COALESCE($5::boolean, completed),
             completed_at = CASE
               WHEN $5::boolean IS NULL THEN completed_at
@@ -128,7 +154,16 @@ export async function updateTask(id, { title, dueDate, dueDateGiven, completed, 
             END
       WHERE id = $1
       RETURNING ${COLUMNS}`,
-    [id, title ?? null, dueDateGiven, dueDate ?? null, completed ?? null, archived ?? null],
+    [
+      id,
+      title ?? null,
+      dueDateGiven,
+      dueDate ?? null,
+      completed ?? null,
+      archived ?? null,
+      reminderGiven,
+      reminderAt ?? null,
+    ],
   );
 
   if (rows.length === 0) throw notFound("No such task");

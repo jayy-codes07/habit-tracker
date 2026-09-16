@@ -100,18 +100,48 @@ The modules, and why they are grouped this way:
   `(habit_id, date)`, so paging backwards is a scan of that index, and a page stays stable while
   the history behind it is being edited.
 - `tasks/`, `journal/` — one table each.
-- `leetcode/` — the personal LeetCode workspace, one table. It owns the screenshot
-  bytes too: `bytea` on the row rather than a file on disk, because the image is 1:1
-  with the problem, rides the database's backup, and cannot be orphaned. Postgres
-  TOASTs it out of line, so the list read — which never names the column — never pays
-  for it. **The one thing the JSON export cannot carry**: `res.json()` builds the whole
-  document in memory, so the export names each screenshot's type and size and `pg_dump`
-  is what carries the bytes. `PUT /leetcode/:id/screenshot` takes **raw image bytes**,
-  not multipart — `express.raw` mounted on that one route, so no parser and no
-  dependency — and the declared Content-Type is checked against the file's own magic
-  bytes before it is stored, because that value is echoed straight back into a response
-  header. SVG is excluded from the allowlist on purpose: it can carry script, and the
-  bytes are served same-origin behind an `<img>`.
+- `leetcode/` — the personal LeetCode workspace, one table. The screenshot bytes are
+  **not** in it: Cloudinary holds them and the row holds `screenshot_public_id` plus
+  format, dimensions and size. They were `bytea` until 004, and moved because
+  `res.json()` builds the export in memory — a few hundred embedded problem statements
+  is a backup that exhausts the heap. The export now carries a whole problem, reference
+  included. `PUT /leetcode/:id/screenshot` still takes **raw image bytes**, not
+  multipart — `express.raw` mounted on that one route, so no parser and no dependency —
+  and the declared Content-Type is checked against the file's own magic bytes before
+  anything leaves the process. SVG is excluded from the allowlist on purpose: it can
+  carry script, and the bytes end up behind an `<img>` either way. There is **no GET**
+  for a screenshot: reads carry `screenshot_url` (a Cloudinary transformation for
+  display) and `screenshot_full_url` (the original), both derived from the public_id on
+  every read by `lib/cloudinary/url.js` — a stored URL could only go stale.
+  All Cloudinary access lives in `src/lib/cloudinary/` (`config`, `upload`, `delete`,
+  `url`); uploads are **signed and server-side**, and `CLOUDINARY_*` never reaches the
+  browser. Two stores have to be kept in step, and the ordering is the whole of it:
+  an upload whose row write fails is destroyed (an orphan is the failure mode bytea did
+  not have), a replaced asset is destroyed only **after** the row points at the new one,
+  and `clearScreenshot` deletes at Cloudinary **first** — a refused delete is a 502 and
+  the row keeps its reference, because the app must never report a deletion it did not
+  manage. Each upload gets a fresh public_id, so a replacement is a new URL and needs no
+  cache-busting. `img-src` in [app.js](server/src/app.js) gains `res.cloudinary.com` for
+  exactly this and nothing else moves in the CSP.
+- `reminders/` owns the notification settings row and the one endpoint that decides what is due.
+  It owns two small tables — `app_settings` (one row, forever) and `reminder_deliveries` — and
+  composes the rest, as `overview/` does. **Nothing about eligibility is stored**: a paused habit,
+  an archived one, a completed task and an empty review queue are all recomputed on every check
+  from the same facts every other read uses, so a reminder cannot outlive its reason. A reminder
+  *time* is a column on the thing itself (`habits.reminder_at`, `tasks.reminder_at`, set through
+  those modules' own PATCH) and NULL is "no reminder" — there is no second enabled flag beside it
+  to disagree with it. `dueNow()` is a **write**: it selects what is due and records it
+  delivered in one `INSERT ... ON CONFLICT DO NOTHING RETURNING`, which is the whole of duplicate
+  prevention across devices, restarts and a scheduler that ticks twice. It is called by
+  `scheduler.js` — one `setInterval` started in `server.js` and **never in `createApp()`**, or every
+  test that builds an app starts a timer that writes to the database it is rolling back. A missed
+  tick is deliberately **not** backfilled, and `deliverDue()` claims nothing when no device is
+  subscribed, so subscribing a phone at noon does not find the day's reminders already burnt. Times are wall-clock `HH:MM` in
+  APP_TIMEZONE, from `nowTime()` in `lib/dates.js` — never an instant, so a reminder at eight is
+  eight on both sides of a DST transition — and they compare lexicographically exactly as ISO
+  dates do. Quiet hours may run overnight (`inQuietHours` reads `start > end` as two windows) and
+  a suppressed reminder is **dropped, not queued**: it is never claimed, so it can still fire
+  later the same day and simply does not arrive if the window outlasts the day.
 - `search/` is one endpoint over everything that was written down: journal entries, habit
   notes, monthly reflections and a problem's title, approach, solution and topics. It owns no
   tables and it is `ILIKE`, not `tsvector` — at one person's scale a sequential scan is
@@ -124,8 +154,30 @@ The modules, and why they are grouped this way:
 - `overview/` owns `/day`, `/grid`, `/review` and `/compare`. It owns **no tables**: it composes the other
   services and the pure functions in `src/lib/`, which is what keeps the scoring rules in one
   place. Those endpoints are deliberately fat — a phone should paint a screen in one request.
-- `export/` is the whole database as one JSON file. Raw rows only; anything derived can be
-  recomputed, but a lost row is lost.
+- `export/` is the whole database as one JSON file, **and the restore that reads it back**. Raw
+  rows only; anything derived can be recomputed, but a lost row is lost. Version 5 since reminders:
+  `app_settings` is in the document and `reminder_at` is on habits and tasks.
+  `reminder_deliveries` is deliberately **not** — a week of dedupe state is not a record of
+  anything that happened to you, and neither is `push_subscriptions`, which is what a browser is.
+  The restore lives in the module's one service and is the module's only write. It accepts
+  **version 5 and nothing else**, refusing by number rather than guessing; it validates the whole
+  document before it writes a byte (`inspect()` is also `POST /import/check`, which is what the
+  confirmation dialog is a summary *of*); and the TRUNCATE and every insert are **one
+  `withTransaction`** — one of the very few write paths here that genuinely needs one, because a
+  restore that failed halfway is the second disaster in one afternoon. It **replaces, never
+  merges**: one user, one database, and a merge would mean inventing an identity for every row.
+  **Ids are preserved** — they are what holds a schedule version to its habit — which is why the
+  inserts carry `OVERRIDING SYSTEM VALUE` and why each identity sequence is `setval`'d past the
+  restored maximum afterwards; without that the next habit created collides with the first one in
+  the file. Each table goes in through `json_populate_recordset(NULL::<table>, $1)`, so the export's
+  column list *is* the insert and neither has to be written twice. `reminder_deliveries` is
+  truncated too and that is not optional: it is keyed by (thing, day), so a restored id can collide
+  with a delivery recorded against a row that no longer exists and silently swallow that habit's
+  reminder for the rest of the day. Screenshot **bytes are not in the file and never will be** —
+  the row carries `screenshot_public_id` and a restore puts the reference back untouched, so a
+  restore into an app pointed at another Cloudinary account leaves LeetCode rows that are complete
+  and internally valid with images that do not load. The dialog says how many before you confirm;
+  nothing is silently invented, and no Cloudinary asset is ever deleted by a restore.
 
 ### Ambient transactions
 
@@ -385,9 +437,12 @@ that builds it. Three consequences that have all bitten already:
   running server changes nothing until the process restarts.
 - **`web/package-lock.json` must stay committed.** The `web-build` stage runs `npm ci`.
 
-Helmet's default CSP (`script-src 'self'`, `font-src 'self'`, `style-src … 'unsafe-inline'`) needs
-no modification: Vite emits no inline `<script>`, the fonts are self-hosted, and React's inline
-`style` attributes are covered. Do not add a CDN — `connect-src` falls back to `'self'` too.
+Helmet's default CSP needs one addition and no others: `img-src` carries
+`res.cloudinary.com`, because that is where screenshots are served from. `script-src 'self'`,
+`font-src 'self'` and `style-src … 'unsafe-inline'` stay as they are — Vite emits no inline
+`<script>`, the fonts are self-hosted, and React's inline `style` attributes are covered. Do not
+add a CDN for code — `connect-src` falls back to `'self'` too, and `data:` stays in `img-src` for
+the editor's pre-save preview.
 
 ### The SPA
 
@@ -405,7 +460,8 @@ read with one map:
   is why `useSetLog` lives there and not under `overview/`. `overview/` owns the composed screen
   reads — `/day`, `/grid` and `/review`, all three implemented — and no tables.
 - `leetcode/` owns the workspace: the index rows, the editor dialog, the plate and the
-  paste handler. `usePastedImage` listens on **`document`**, not on a wrapper — a paste
+  paste handler. The plate renders `screenshot_url` straight from the row — the client
+  builds no image URL and knows no cloud name, and presence is `screenshot_url !== null`. `usePastedImage` listens on **`document`**, not on a wrapper — a paste
   with nothing editable focused targets `document.body`, so a React `onPaste` on a div
   below it never fires and reads as though it would.
 - `routes/` — one file per URL: `Day`, `Grid`, `Review`, `Habits`, `HabitHistory`, `Tasks`,
@@ -466,6 +522,29 @@ one wins is decided by the order Tailwind emits them, not the order they are wri
 `w-full` wins both. Wrap the control in an `inline-flex` box instead. The key on
 `/habits` gets away with `w-auto` only because it is a flex item with a sibling to
 shrink against.
+
+**Reminders arrive by Web Push.** The server decides, the browser's own push service carries it,
+and `public/sw.js` shows it — so a reminder arrives with the app completely closed and nothing of
+ours running. `lib/push.js` is the only file that touches the protocol (the `web-push` package: a
+payload is ECDH-P256 + HKDF + AES-128-GCM, not something to hand-roll); VAPID's **public** key is
+meant to reach the browser and rides on `GET /reminders`, the private key signs every send and
+never leaves the process. Only 404 and 410 delete a `push_subscriptions` row — a 429 or a 500 is a
+bad minute, and deleting a live device's row over one ends every future reminder to it silently.
+Payload TTL is an hour, which is requirement "no backlog" held at the protocol level: an
+undeliverable reminder expires rather than arriving tonight.
+
+**The old poll is gone.** `features/notifications/` owns the settings
+section, the permission state and `push.ts` — the subscribe/unsubscribe handshake and nothing that
+runs on a timer. Asking "is anything due" *was* the limitation, so there is no such call any more.
+Whether reminders are on is app-wide (the settings row); whether **this** device holds a
+subscription is a fact only the browser knows, which is why the section can offer "use reminders on
+this device" to a second device. A subscription made against a different VAPID key is torn down
+rather than reused — the push service refuses it with a 403 that looks nothing like "your keys
+changed", and the device goes quiet under a switch that says it is on. Do not add a `setTimeout`
+per reminder: it dies with the page, drifts over a laptop sleep and fires in every tab. `sw.js`
+handles `push` and `notificationclick` and caches nothing, on purpose; a caching worker serving
+yesterday's bundle is worse than no offline. Which day and which minute it is stays the server's
+answer, as everywhere else here.
 
 **Today is not a screen.** It is `/day/:date` with the date set to today. Logging this morning and
 fixing last Tuesday are the same job, so they are the same component — which is also why

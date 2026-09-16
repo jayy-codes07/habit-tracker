@@ -1,5 +1,5 @@
 import { request, sendJson } from "../../lib/api-client";
-import type { Id, IsoDate, Task, TasksPayload } from "../../types";
+import type { ClockTime, Id, IsoDate, Task, TasksPayload } from "../../types";
 
 /** Tasks are archived, never deleted — hence `archived` rather than a DELETE. */
 export interface TaskPatch {
@@ -7,6 +7,12 @@ export interface TaskPatch {
   due_date?: IsoDate | null;
   completed?: boolean;
   archived?: boolean;
+  /**
+   * Null turns the reminder off; omitting it leaves it alone. Clearing the due
+   * date clears this too, server-side and in the same statement — an undated
+   * task belongs to no day, so there is no day for a reminder to be on.
+   */
+  reminder_at?: ClockTime | null;
 }
 
 /** Which view of the table to read. The three are mutually exclusive. */

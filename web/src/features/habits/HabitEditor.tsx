@@ -46,6 +46,9 @@ export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => v
   // target — `resumes_to` is the version the pause interrupted, and is what
   // unticking Paused must restore. Guessing here turned Tue/Thu into every day.
   const [draft, setDraft] = useState(draftOf(wasPaused ? habit.resumes_to : current));
+  // "" is no reminder. One field rather than a switch and a time: a time is
+  // already a switch, and two controls for one fact is two things to disagree.
+  const [reminder, setReminder] = useState(habit.reminder_at ?? "");
   const [confirmDelete, setConfirmDelete] = useState(false);
   // The version the server actually stored, held only when it dated it forward.
   const [saved, setSaved] = useState<Schedule | null>(null);
@@ -86,7 +89,11 @@ export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => v
   const currentAfterUnit =
     nextUnit === null && current ? { ...current, target_value: null } : current;
 
-  const detailsChanged = trimmed !== habit.name || color !== habit.color_token || unitChanged;
+  const nextReminder = reminder === "" ? null : reminder;
+  const reminderChanged = nextReminder !== habit.reminder_at;
+
+  const detailsChanged =
+    trimmed !== habit.name || color !== habit.color_token || unitChanged || reminderChanged;
   const scheduleChanged = paused
     ? !wasPaused
     : wasPaused || !matchesSchedule(currentAfterUnit, saving);
@@ -155,6 +162,9 @@ export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => v
             // presence, so sending it every time would turn a rename into a
             // unit write — which a habit that has measured anything refuses.
             ...(unitChanged ? { unit: nextUnit } : {}),
+            // Same key-presence rule as the unit: null turns it off, an absent
+            // key leaves it alone.
+            ...(reminderChanged ? { reminder_at: nextReminder } : {}),
           },
         });
       }
@@ -248,6 +258,40 @@ export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => v
           />
           <span className="flex-1">Paused</span>
         </label>
+
+        <div>
+          <label htmlFor="edit-reminder" className="label text-muted block pb-2.5">
+            Reminder (optional)
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="edit-reminder"
+              type="time"
+              value={reminder}
+              onChange={(event) => setReminder(event.target.value)}
+              aria-describedby="edit-reminder-hint"
+              className={FIELD}
+            />
+            {reminder !== "" && (
+              <button
+                type="button"
+                onClick={() => setReminder("")}
+                className="label min-h-12 shrink-0 px-2 underline decoration-[var(--c-baseline)] underline-offset-[6px]"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <p id="edit-reminder-hint" className="text-meta text-muted mt-1.5">
+            {/* What this does NOT do is the part worth saying: the time is a
+                property of the habit, and every reason a reminder might not
+                arrive lives somewhere else. Promising one here would be a
+                promise made in the wrong file. */}
+            {reminder === ""
+              ? "A time here says the habit is scheduled today — nothing more. Leave it blank for no reminder."
+              : "Only on days this habit is scheduled for, and never while it is paused or archived. It can still be held back by quiet hours or by the master switch under Settings."}
+          </p>
+        </div>
 
         <p className="text-meta text-muted -mt-3">
           {paused

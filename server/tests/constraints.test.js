@@ -358,27 +358,59 @@ const cases = [
     () => makeProblem({ solution: LONG(40001) }),
   ],
   [
-    "a screenshot type with no bytes behind it",
+    "a screenshot asset with no dimensions behind it",
     "leetcode_problems_screenshot_whole",
-    () => makeProblem({ screenshot_type: "image/png" }),
+    () => makeProblem({ screenshot_public_id: "leetcode/abc", screenshot_format: "png" }),
   ],
   [
-    "screenshot bytes with no type to serve them as",
+    "screenshot dimensions with no asset to fetch",
     "leetcode_problems_screenshot_whole",
-    () => makeProblem({ screenshot: Buffer.from([1, 2, 3]), screenshot_bytes: 3 }),
+    () => makeProblem({ screenshot_width: 800, screenshot_height: 600, screenshot_bytes: 4096 }),
   ],
-  // SVG is script-capable and this app serves the bytes back from its own
-  // origin, so the allowlist is the thing standing between a stored file and
-  // stored XSS.
+  // SVG is script-capable and ends up behind an <img> tag either way, so the
+  // allowlist is the thing standing between a stored file and stored XSS —
+  // wherever the bytes themselves happen to live.
   [
     "an SVG screenshot",
-    "leetcode_problems_screenshot_type_valid",
+    "leetcode_problems_screenshot_format_valid",
     () =>
       makeProblem({
-        screenshot: Buffer.from("<svg/>"),
-        screenshot_type: "image/svg+xml",
-        screenshot_bytes: 6,
+        screenshot_public_id: "leetcode/abc",
+        screenshot_format: "svg",
+        screenshot_width: 800,
+        screenshot_height: 600,
+        screenshot_bytes: 4096,
       }),
+  ],
+
+  // --- reminders ---------------------------------------------------------
+
+  [
+    "a reminder on an undated task",
+    "tasks_reminder_needs_date",
+    // An undated task waits under Anytime and belongs to no day, so there is no
+    // day a reminder could be on. updateTask() clears the one with the other in
+    // a single statement; this is what stops anything else from writing the pair.
+    () =>
+      query("INSERT INTO tasks (title, due_date, reminder_at) VALUES ($1, NULL, $2)", [
+        "Someday",
+        "09:00",
+      ]),
+  ],
+  [
+    "a second settings row",
+    "app_settings_singleton",
+    // Single user, so the table is a singleton and says so rather than relying
+    // on every reader remembering to say WHERE id = 1.
+    () => query("INSERT INTO app_settings (id) VALUES (2)"),
+  ],
+  [
+    "half a quiet-hours window",
+    "app_settings_quiet_hours_whole",
+    // One end of a window means the code has to invent the other, which is how
+    // 22:30 quietly becomes "all night".
+    () =>
+      query("UPDATE app_settings SET quiet_start = $1, quiet_end = NULL WHERE id = 1", ["22:30"]),
   ],
 ];
 
@@ -396,7 +428,7 @@ describe("schema invariants", () => {
   it("covers every case the product depends on", () => {
     // A tripwire, not a metric: if a constraint is added to the schema without a
     // case here, this number is the reminder.
-    assert.equal(cases.length, 53);
+    assert.equal(cases.length, 56);
   });
 });
 

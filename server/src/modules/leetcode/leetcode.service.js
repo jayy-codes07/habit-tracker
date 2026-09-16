@@ -11,6 +11,12 @@
  * column a streak could be built from; this is a record of what was solved and
  * what has been revisited, and that is the whole of it.
  *
+ * The screenshot bytes are not in this table. Cloudinary holds them and the row
+ * holds the reference, which is what lets the JSON export carry a whole problem.
+ * The cost is two stores to keep in step, and the three functions that do it —
+ * setScreenshot, clearScreenshot, deleteProblem — each say at the function which
+ * failure they are ordering themselves against.
+ *
  * Removal is archiving. The screenshot and the notes on a row are worth more
  * than a task's title, so nothing a single click does here is irreversible, and
  * every working read filters `archived_at IS NULL`. deleteProblem is the narrow
@@ -19,6 +25,9 @@
  */
 import { config } from "../../config/index.js";
 import { query } from "../../db/index.js";
+import { destroyImage } from "../../lib/cloudinary/delete.js";
+import { uploadImage } from "../../lib/cloudinary/upload.js";
+import { displayUrl, originalUrl } from "../../lib/cloudinary/url.js";
 import { today } from "../../lib/dates.js";
 import { badRequest, conflict, notFound } from "../../lib/errors.js";
 
@@ -30,12 +39,13 @@ import { badRequest, conflict, notFound } from "../../lib/errors.js";
  * carrying a page of prose is a payload the workspace reloads on every write,
  * for text no list has ever shown.
  *
- * `screenshot` is absent for a harder reason — naming it would drag every row's
- * TOASTed image through the connection just to answer "is there one". The byte
- * count answers that, and is a fact worth showing anyway.
+ * The screenshot columns are all here now, and cost nothing: they are a
+ * public_id and four numbers, not an image. The bytes are in Cloudinary.
  */
 const LIST_COLUMNS = `id, number, title, difficulty, topics, url, solved_on,
-                      ai_assisted, reviewed_on, screenshot_bytes,
+                      ai_assisted, reviewed_on,
+                      screenshot_public_id, screenshot_format, screenshot_width,
+                      screenshot_height, screenshot_bytes,
                       created_at, updated_at, archived_at`;
 
 /** The detail read adds the two long columns, and still never the bytes. */
@@ -78,9 +88,9 @@ const PATCHABLE = [
 /**
  * The stored screenshot formats.
  *
- * SVG is deliberately absent and must stay absent: it can carry script, and
- * this app serves the bytes back from its own origin behind an <img> tag, where
- * one would run as the page. The same list is a CHECK on the column.
+ * SVG is deliberately absent and must stay absent: it can carry script, and the
+ * bytes end up behind an <img> tag either way. The equivalent list is a CHECK on
+ * screenshot_format, in Cloudinary's spelling of the same three.
  */
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
@@ -117,6 +127,24 @@ function sniff(buffer) {
   return null;
 }
 
+/**
+ * The two URLs an image is displayed from, derived from the public_id.
+ *
+ * Derived on every read rather than stored: a public_id plus a transformation is
+ * the whole address, so a column holding one could only go stale — and the
+ * transformation stays a decision this server gets to change after the row was
+ * written. Applied at every return site, so no caller can hand back a row that
+ * says it has a screenshot without saying where.
+ */
+function withUrls(row) {
+  const id = row.screenshot_public_id ?? null;
+  return {
+    ...row,
+    screenshot_url: id === null ? null : displayUrl(id),
+    screenshot_full_url: id === null ? null : originalUrl(id),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
@@ -143,7 +171,7 @@ export async function loadProblems({ archived = false } = {}) {
         ORDER BY archived_at DESC, id DESC`,
       [config.timezone],
     );
-    return rows;
+    return rows.map(withUrls);
   }
 
   const { rows } = await query(
@@ -152,7 +180,27 @@ export async function loadProblems({ archived = false } = {}) {
       WHERE archived_at IS NULL
       ORDER BY solved_on DESC, id DESC`,
   );
-  return rows;
+  return rows.map(withUrls);
+}
+
+/**
+ * How many problems are waiting for review.
+ *
+ * The queue expression lives in this module and nowhere else — `ai_assisted AND
+ * reviewed_on IS NULL`, over unarchived rows, exactly as needsReview() reads it
+ * on the client. The reminder needs a count and not the rows, and it is the one
+ * caller that cannot be served by the list above: a scheduler asking "is there
+ * anything?" has no reason to load every problem to find out.
+ *
+ * This is a workload, never a score. Nothing counts how many have been reviewed.
+ */
+export async function countNeedingReview() {
+  const { rows } = await query(
+    `SELECT count(*)::int AS count
+       FROM leetcode_problems
+      WHERE archived_at IS NULL AND ai_assisted AND reviewed_on IS NULL`,
+  );
+  return rows[0].count;
 }
 
 /**
@@ -168,17 +216,16 @@ export async function loadProblem(id) {
     [config.timezone, id],
   );
   if (rows.length === 0) throw notFound("No such problem");
-  return rows[0];
+  return withUrls(rows[0]);
 }
 
-/** The bytes and their type, or null when the row carries no screenshot. */
-export async function loadScreenshot(id) {
-  const { rows } = await query(
-    "SELECT screenshot, screenshot_type FROM leetcode_problems WHERE id = $1",
-    [id],
-  );
+/** The asset a row points at, or null. Throws 404 for a row that is not there. */
+async function currentPublicId(id) {
+  const { rows } = await query("SELECT screenshot_public_id FROM leetcode_problems WHERE id = $1", [
+    id,
+  ]);
   if (rows.length === 0) throw notFound("No such problem");
-  return rows[0].screenshot === null ? null : rows[0];
+  return rows[0].screenshot_public_id;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +255,7 @@ export async function createProblem(input) {
       input.solution ?? null,
     ],
   );
-  return rows[0];
+  return withUrls(rows[0]);
 }
 
 /**
@@ -257,18 +304,31 @@ export async function updateProblem(id, patch, { reviewed, archived } = {}) {
   );
 
   if (rows.length === 0) throw notFound("No such problem");
-  return rows[0];
+  return withUrls(rows[0]);
 }
 
 /**
  * Stores the screenshot, replacing whatever was there.
  *
- * The declared type is checked against the bytes before anything is written:
- * this column is echoed into a Content-Type header, and a header the app took
- * on trust is how an <img> tag ends up serving something that is not an image.
- * A mismatch is answered rather than quietly corrected to whatever the bytes
- * really are — silently storing something other than what was sent is how a
- * screenshot turns out to be a different file six months later.
+ * The declared type is checked against the bytes before anything leaves this
+ * process: the header is a claim about a file, and a file that is not what it
+ * says it is must not be stored as though it were. A mismatch is answered rather
+ * than quietly corrected to whatever the bytes really are — silently storing
+ * something other than what was sent is how a screenshot turns out to be a
+ * different file six months later.
+ *
+ * Then three steps, in the order that is the whole of the orphan story:
+ *
+ *   1. upload, under a fresh public_id. The previous asset is untouched, so a
+ *      failure here leaves the old screenshot working.
+ *   2. point the row at it. If that fails — or the problem was deleted while the
+ *      upload was in flight — the asset just uploaded is destroyed: an upload
+ *      nothing references is exactly an orphan, and this is the last moment the
+ *      app knows its id.
+ *   3. destroy the asset the row used to point at. This one runs after the write
+ *      and cannot be part of it: the row is already correct and the new image is
+ *      already live, so a failure here is a leaked asset to log rather than a
+ *      reason to fail a request that succeeded.
  */
 export async function setScreenshot(id, buffer, declaredType) {
   if (!IMAGE_TYPES.includes(declaredType)) {
@@ -282,16 +342,36 @@ export async function setScreenshot(id, buffer, declaredType) {
     throw badRequest(`That file is a ${actual}, but it arrived labelled ${declaredType}`);
   }
 
-  const { rows } = await query(
-    `UPDATE leetcode_problems
-        SET screenshot = $2, screenshot_type = $3, screenshot_bytes = $4
-      WHERE id = $1
-      RETURNING ${DETAIL_COLUMNS}`,
-    [id, buffer, declaredType, buffer.length],
-  );
+  const previous = await currentPublicId(id);
+  const asset = await uploadImage(buffer, declaredType);
 
-  if (rows.length === 0) throw notFound("No such problem");
-  return rows[0];
+  let rows;
+  try {
+    ({ rows } = await query(
+      `UPDATE leetcode_problems
+          SET screenshot_public_id = $2, screenshot_format = $3,
+              screenshot_width = $4, screenshot_height = $5, screenshot_bytes = $6
+        WHERE id = $1
+        RETURNING ${DETAIL_COLUMNS}`,
+      [id, asset.public_id, asset.format, asset.width, asset.height, asset.bytes],
+    ));
+  } catch (error) {
+    await destroyImage(asset.public_id).catch(() => {});
+    throw error;
+  }
+
+  if (rows.length === 0) {
+    await destroyImage(asset.public_id).catch(() => {});
+    throw notFound("No such problem");
+  }
+
+  if (previous !== null) {
+    await destroyImage(previous).catch((error) => {
+      console.error("[leetcode] replaced screenshot left behind:", previous, error.message);
+    });
+  }
+
+  return withUrls(rows[0]);
 }
 
 /**
@@ -313,32 +393,54 @@ export async function deleteProblem(id) {
     `WITH victim AS (
        DELETE FROM leetcode_problems
         WHERE id = $1
-          AND approach IS NULL AND solution IS NULL AND screenshot IS NULL
-       RETURNING id
+          AND approach IS NULL AND solution IS NULL AND screenshot_public_id IS NULL
+       RETURNING screenshot_public_id
      )
      SELECT EXISTS (SELECT 1 FROM victim) AS deleted,
+            (SELECT screenshot_public_id FROM victim) AS public_id,
             EXISTS (SELECT 1 FROM leetcode_problems WHERE id = $1) AS existed`,
     [id],
   );
 
-  const { deleted, existed } = rows[0];
-  if (deleted) return;
+  const { deleted, existed, public_id: publicId } = rows[0];
+  if (deleted) {
+    // Always null while the guard above stands — a row with a screenshot is a
+    // record and can only be archived. Kept anyway: if that rule is ever
+    // relaxed, the asset has to go with the row, and the alternative is an
+    // orphan nobody ever discovers.
+    if (publicId !== null) await destroyImage(publicId);
+    return;
+  }
   if (!existed) throw notFound("No such problem");
   throw conflict(
     "This problem has notes or a screenshot on it. Archive it instead of deleting it.",
   );
 }
 
-/** Idempotent: clearing a screenshot that was never there is the same outcome. */
+/**
+ * Removes the screenshot: from Cloudinary first, then from the row.
+ *
+ * That order is the requirement. If the delete is refused, destroyImage throws
+ * and the row keeps pointing at an asset that is still there — the app never
+ * reports a deletion it did not manage. The reverse order clears the row first
+ * and loses the only reference to a file it just promised to remove.
+ *
+ * Idempotent: clearing a screenshot that was never there is the same outcome,
+ * and Cloudinary counts an already-deleted asset as deleted.
+ */
 export async function clearScreenshot(id) {
-  const { rows } = await query(
+  const publicId = await currentPublicId(id);
+  if (publicId === null) return;
+
+  await destroyImage(publicId);
+
+  await query(
     `UPDATE leetcode_problems
-        SET screenshot = NULL, screenshot_type = NULL, screenshot_bytes = NULL
-      WHERE id = $1
-      RETURNING id`,
+        SET screenshot_public_id = NULL, screenshot_format = NULL,
+            screenshot_width = NULL, screenshot_height = NULL, screenshot_bytes = NULL
+      WHERE id = $1`,
     [id],
   );
-  if (rows.length === 0) throw notFound("No such problem");
 }
 
 /**

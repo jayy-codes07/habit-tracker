@@ -102,6 +102,37 @@ export function today() {
   return todayIn(config.timezone);
 }
 
+/**
+ * The wall-clock time it currently is in `timeZone`, as 'HH:MM'.
+ *
+ * The same reasoning as todayIn, and the same construction: named parts rather
+ * than a sliced format(), and hourCycle 'h23' because 'en-CA' renders midnight
+ * as 24:00 under h24 — an hour that sorts after everything and exists on no
+ * clock. 'HH:MM' compares lexicographically, which is what lets a reminder time
+ * be tested against now with <= and no parsing, exactly as dates are.
+ */
+export function timeIn(timeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(new Date());
+
+  const part = (type) => parts.find((candidate) => candidate.type === type)?.value ?? "";
+
+  return `${part("hour").padStart(2, "0")}:${part("minute").padStart(2, "0")}`;
+}
+
+/**
+ * The application's current time of day. Reminders are the only thing that asks
+ * — everything else here is about calendar days — and it belongs in this file
+ * for the same reason today() does: nothing outside it may read a clock.
+ */
+export function nowTime() {
+  return timeIn(config.timezone);
+}
+
 // ---------------------------------------------------------------------------
 // Arithmetic
 // ---------------------------------------------------------------------------
