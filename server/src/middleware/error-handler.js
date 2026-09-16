@@ -39,6 +39,26 @@ export function errorHandler(error, _req, res, _next) {
     });
   }
 
+  /*
+   * Body-parser rejections: a body over the limit, or one that would not parse.
+   *
+   * They are neither AppError nor ZodError, so without this branch a screenshot
+   * a megabyte too big and a stray brace in a JSON body both answered 500 and
+   * were logged as bugs — an incident report for a caller mistake the parser
+   * had already diagnosed correctly.
+   *
+   * `expose` is set by body-parser only for statuses below 500, so it is the
+   * check for "safe to answer with". The message is NOT forwarded: a parse
+   * failure names the character it choked on, which is the submitted body
+   * coming back out, and this handler does not echo rejected input anywhere
+   * else either.
+   */
+  if (error.expose === true && error.status >= 400 && error.status < 500) {
+    return res.status(error.status).json({
+      error: error.status === 413 ? "That upload is too large." : "Malformed request body.",
+    });
+  }
+
   // Anything else is a bug.
   // Logs the error only. Request bodies, cookies and auth headers never reach here.
   console.error("[api] unhandled error:", error);

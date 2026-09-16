@@ -606,3 +606,35 @@ export async function setLog(habitId, date, { status, value, note }) {
 export async function clearLog(habitId, date) {
   await query("DELETE FROM habit_logs WHERE habit_id = $1 AND date = $2", [habitId, date]);
 }
+
+/**
+ * What the logs say about a date range, and how many habits were alive in it.
+ *
+ * Rows, not verdicts. The monthly review resolves every day against the
+ * schedule in force on it, which is what makes "not logged" and "paused"
+ * meaningful there — and which is exactly the arithmetic that must not be run
+ * twice over two different years to produce one comparison. These are three
+ * counts of rows that exist, plus a count of habits that existed, and they mean
+ * the same thing in 2024 as in 2026 whatever the schedules did in between.
+ *
+ * `done` therefore includes a day worked while unscheduled, which the review
+ * would call a bonus. That is the honest reading of the count: it is days
+ * logged done, not days the schedule asked for.
+ */
+export async function countLogsBetween(from, to) {
+  const { rows } = await query(
+    `SELECT
+       count(*) FILTER (WHERE status = 'done')::int    AS done,
+       count(*) FILTER (WHERE status = 'missed')::int  AS missed,
+       count(*) FILTER (WHERE status = 'skipped')::int AS skipped,
+       (SELECT count(*)::int
+          FROM habits h
+         WHERE h.start_date <= $2
+           AND (h.archived_at IS NULL
+                OR (h.archived_at AT TIME ZONE $3)::date >= $1)) AS habits
+       FROM habit_logs
+      WHERE date BETWEEN $1 AND $2`,
+    [from, to, config.timezone],
+  );
+  return rows[0];
+}

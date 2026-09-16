@@ -19,10 +19,29 @@ const DERIVED = ["day", "grid", "review", "history", "habits", "tasks"] as const
 // and a log written from the day screen changes both.
 const SCORED = ["day", "grid", "review", "history"] as const;
 
+/**
+ * The two reads that cross every feature boundary: Find searches journal
+ * entries, habit notes and the LeetCode workspace together, and the year-on-year
+ * comparison counts all four sources plus tasks.
+ *
+ * They are separated out because they are the one thing the leetcode feature
+ * shares with the rest of the app — everything else there is genuinely
+ * unconnected, and its own invalidation says so and should keep saying so.
+ */
+const RECORD = ["search", "compare"] as const;
+
+/** Anything that changes a written or counted row changes what Find can find. */
+export const invalidateRecord = (client: QueryClient) => {
+  for (const key of RECORD) void client.invalidateQueries({ queryKey: [key] });
+};
+
 export const invalidateAll = (client: QueryClient) => {
   for (const key of DERIVED) void client.invalidateQueries({ queryKey: [key] });
+  invalidateRecord(client);
 };
 
 export const invalidateScored = (client: QueryClient) => {
   for (const key of SCORED) void client.invalidateQueries({ queryKey: [key] });
+  // A log carries a note, and a note is searchable.
+  invalidateRecord(client);
 };

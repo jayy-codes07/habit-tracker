@@ -11,6 +11,7 @@
  */
 import {
   addDays,
+  addMonths,
   eachDay,
   endOfWeek,
   monthRange,
@@ -36,6 +37,7 @@ import {
 } from "../../lib/streaks.js";
 import * as habitsService from "../habits/habits.service.js";
 import * as journalService from "../journal/journal.service.js";
+import * as leetcodeService from "../leetcode/leetcode.service.js";
 import * as tasksService from "../tasks/tasks.service.js";
 
 // ---------------------------------------------------------------------------
@@ -399,4 +401,80 @@ function countVerdicts(view, habit, from, to, today) {
 async function reviewTasks(start, end) {
   const { completed, created } = await tasksService.countTasksBetween(start, end);
   return { completed, created };
+}
+
+// ---------------------------------------------------------------------------
+// The same month, a year apart
+// ---------------------------------------------------------------------------
+
+/**
+ * One month, as counts of things that happened.
+ *
+ * Five plain figures and nothing derived from them. There is no rate here, no
+ * total, no composite and nothing that could be read as a grade: a comparison
+ * across a year is exactly where a score would do the most damage, because
+ * "worse than last September" is a sentence about a person rather than about a
+ * month.
+ *
+ * Counts of ROWS, deliberately — see countLogsBetween. The review's tallies
+ * resolve every day against the schedule in force on it, which is what makes
+ * "not logged" mean something there; running that over a year-old month to
+ * produce a figure beside this year's would be a second, slower scoring pass
+ * whose answer moves whenever a past schedule is understood differently. A row
+ * that exists means the same thing in both years.
+ *
+ * `present` is what lets the client say "there is nothing from a year ago"
+ * instead of drawing a column of zeroes, which reads as a bad month rather than
+ * as no record.
+ */
+async function monthFacts(month) {
+  const { start, end } = monthRange(month);
+
+  const [journal, habits, tasks, leetcode] = await Promise.all([
+    journalService.countEntriesBetween(start, end),
+    habitsService.countLogsBetween(start, end),
+    tasksService.countTasksBetween(start, end),
+    leetcodeService.countSolvedBetween(start, end),
+  ]);
+
+  const facts = {
+    month,
+    journal_days: journal.days,
+    // Whether the month was reflected on at all — one fact, not the prose.
+    reflection: journal.reflections > 0,
+    habits: habits.habits,
+    habit_days: { done: habits.done, missed: habits.missed, skipped: habits.skipped },
+    tasks,
+    leetcode,
+  };
+
+  return {
+    ...facts,
+    present:
+      facts.journal_days > 0 ||
+      facts.reflection ||
+      facts.habits > 0 ||
+      facts.tasks.completed > 0 ||
+      facts.tasks.created > 0 ||
+      facts.leetcode > 0,
+  };
+}
+
+/**
+ * This month beside the same month a year ago.
+ *
+ * A year rather than "the previous month" because a month has a season and a
+ * shape: December is not a worse November, and comparing the two teaches
+ * nothing. The same month last year is the one comparison where the difference
+ * is about you and not about the calendar.
+ *
+ * Both months are reported raw, side by side. No difference is computed, no
+ * direction is named, and the client renders two columns of figures — the
+ * moment this endpoint returned a delta, something downstream would render an
+ * arrow, and an arrow is a verdict.
+ */
+export async function buildCompare(month) {
+  const previousMonth = addMonths(month, -12);
+  const [current, previous] = await Promise.all([monthFacts(month), monthFacts(previousMonth)]);
+  return { month, current, previous };
 }

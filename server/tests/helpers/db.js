@@ -237,6 +237,60 @@ export async function makeTask(overrides = {}) {
   return rows[0];
 }
 
+/**
+ * Defaults to a problem that is NOT in the review queue: ai_assisted false and
+ * reviewed_on null. A test about the queue says `{ ai_assisted: true }` and
+ * nothing else, which is the whole contract in the one line that sets it.
+ */
+export async function makeProblem(overrides = {}) {
+  const row = {
+    number: null,
+    title: nextName("Problem"),
+    difficulty: "medium",
+    topics: [],
+    url: null,
+    solved_on: DEFAULT_START_DATE,
+    ai_assisted: false,
+    reviewed_on: null,
+    approach: null,
+    solution: null,
+    // The three screenshot columns are exposed so a fixture can describe a
+    // problem that has one — and so the constraint suite can attempt the
+    // combinations the API refuses to build, which is the only way to prove the
+    // database refuses them too.
+    screenshot: null,
+    screenshot_type: null,
+    screenshot_bytes: null,
+    archived_at: null,
+    ...overrides,
+  };
+
+  const { rows } = await query(
+    `INSERT INTO leetcode_problems
+       (number, title, difficulty, topics, url, solved_on, ai_assisted, reviewed_on,
+        approach, solution, screenshot, screenshot_type, screenshot_bytes, archived_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+     RETURNING *`,
+    [
+      row.number,
+      row.title,
+      row.difficulty,
+      row.topics,
+      row.url,
+      row.solved_on,
+      row.ai_assisted,
+      row.reviewed_on,
+      row.approach,
+      row.solution,
+      row.screenshot,
+      row.screenshot_type,
+      row.screenshot_bytes,
+      row.archived_at,
+    ],
+  );
+  return rows[0];
+}
+
 export async function makeJournal(overrides = {}) {
   const row = {
     date: DEFAULT_START_DATE,

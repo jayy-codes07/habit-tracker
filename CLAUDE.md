@@ -100,7 +100,28 @@ The modules, and why they are grouped this way:
   `(habit_id, date)`, so paging backwards is a scan of that index, and a page stays stable while
   the history behind it is being edited.
 - `tasks/`, `journal/` — one table each.
-- `overview/` owns `/day`, `/grid` and `/review`. It owns **no tables**: it composes the other
+- `leetcode/` — the personal LeetCode workspace, one table. It owns the screenshot
+  bytes too: `bytea` on the row rather than a file on disk, because the image is 1:1
+  with the problem, rides the database's backup, and cannot be orphaned. Postgres
+  TOASTs it out of line, so the list read — which never names the column — never pays
+  for it. **The one thing the JSON export cannot carry**: `res.json()` builds the whole
+  document in memory, so the export names each screenshot's type and size and `pg_dump`
+  is what carries the bytes. `PUT /leetcode/:id/screenshot` takes **raw image bytes**,
+  not multipart — `express.raw` mounted on that one route, so no parser and no
+  dependency — and the declared Content-Type is checked against the file's own magic
+  bytes before it is stored, because that value is echoed straight back into a response
+  header. SVG is excluded from the allowlist on purpose: it can carry script, and the
+  bytes are served same-origin behind an `<img>`.
+- `search/` is one endpoint over everything that was written down: journal entries, habit
+  notes, monthly reflections and a problem's title, approach, solution and topics. It owns no
+  tables and it is `ILIKE`, not `tsvector` — at one person's scale a sequential scan is
+  milliseconds, it matches substrings ("knee" finds "kneeling") and it needs no index, no trigger
+  and no second copy of every sentence to keep in step. Two rules are load-bearing: the needle's
+  `%`, `_` and `\` are **escaped** before they become a LIKE pattern (unescaped, searching for
+  "100%" matches the whole table), and each source is asked for `limit + 1` so `truncated` can be
+  honest without a COUNT. Results carry no URL — the server owns the record, the client owns the
+  routes (see `hrefOf`).
+- `overview/` owns `/day`, `/grid`, `/review` and `/compare`. It owns **no tables**: it composes the other
   services and the pure functions in `src/lib/`, which is what keeps the scoring rules in one
   place. Those endpoints are deliberately fat — a phone should paint a screen in one request.
 - `export/` is the whole database as one JSON file. Raw rows only; anything derived can be
@@ -242,6 +263,22 @@ live in constraints, with the reasoning in comments.
 - `habits.color_token` is a theme token (`chart-1`…`chart-5`), never hex. `target_value`, `unit` and
   `habit_logs.value` are v2 quantity habits, NULL in v1.
 - `updated_at` is stamped by a `BEFORE UPDATE` trigger on every table, never by callers.
+- **"Needs review" is derived, never stored.** `leetcode_problems` has no
+  `review_status` column and must not gain one: the queue is
+  `ai_assisted AND reviewed_on IS NULL`, expressed on the server in
+  `leetcode.service.js` and on the client in the single `needsReview()` in
+  `features/leetcode/problems.ts`. A stored status can contradict the two facts
+  behind it — clear `ai_assisted` and a row still claiming `needs_review` is a lie
+  the schema would permit. `reviewed_on` is a DATE stamped from `today()`, and
+  re-marking something already reviewed keeps the first day rather than moving it.
+  Note that `needsReview()` also excludes archived rows, which is right for a queue
+  and wrong for "has this been reviewed" — read `reviewed_on` for that, or an
+  archived, unreviewed problem reads as reviewed and a null date reaches a formatter.
+- **A problem is archived like a task, and deletable like a habit.** `DELETE
+  /api/leetcode/:id` answers 409 unless the row carries no approach, no solution and
+  no screenshot — the same "delete a mistake, archive a record" rule habits draw
+  around their logs, applied to the three things you cannot get back by re-reading
+  LeetCode.
 - **Tasks are archived, never deleted.** There is no `DELETE /api/tasks/:id`. Consequently every
   task query must filter `archived_at IS NULL` — `tasks_due_date_open_idx` is partial on
   `WHERE NOT completed` and says nothing about archiving, so an archived open task would otherwise
@@ -367,20 +404,68 @@ read with one map:
   domain UI it has. `habits/` owns **schedules and logs too**, as the server's module does, which
   is why `useSetLog` lives there and not under `overview/`. `overview/` owns the composed screen
   reads — `/day`, `/grid` and `/review`, all three implemented — and no tables.
+- `leetcode/` owns the workspace: the index rows, the editor dialog, the plate and the
+  paste handler. `usePastedImage` listens on **`document`**, not on a wrapper — a paste
+  with nothing editable focused targets `document.body`, so a React `onPaste` on a div
+  below it never fires and reads as though it would.
 - `routes/` — one file per URL: `Day`, `Grid`, `Review`, `Habits`, `HabitHistory`, `Tasks`,
-  `Login`. Route components compose features; features never import routes. `HabitHistory` is
+  `Leetcode`, `Find`, `Login`. Route components compose features; features never import routes. `HabitHistory` is
   `/habits/:id`, one level below the list and the only screen about a single habit over its whole
   life rather than about a day, a week or a month — reached from a row on `/habits` and from a
   habit's name on `/grid`. It is also where the habit **editor** is opened from, so that changing a
   habit happens on the screen that shows what you would be changing; `/habits` rows no longer open
-  it directly.
+  it directly. Its `?on=<date>` moves where the record is read FROM — a year chip or a native
+  `<input type="date">` sets it, and it becomes the server's own `before` cursor (the day after, as
+  that cursor is strictly-before). It moves the sheet as well as the stream, via
+  `useParkedScroller`'s `at`: a screen that says it went to 2024 while the drawing still shows this
+  week is giving two answers to one question. Without it the only way back to a three-year habit's
+  first month was to press Older forty times.
 - `components/` — domain-free UI only (`Dialog`, `Choice`, `ErrorBox`, `Skeleton`, `icons`, and
   `form.ts`, the shared control classes). Anything that knows what a habit is belongs in `features/`.
+- `search/` owns `/search`: the endpoints, the hook, and `results.ts` — `hrefOf` (which screen a
+  result opens), `KIND_LABEL` and `splitMatch`. A habit note opens its **day**, not its habit: the
+  note is editable there and nowhere else. `splitMatch` escapes the needle before it becomes a
+  RegExp, or searching for "c++" throws and blanks the list.
 - `lib/` — `api-client.ts` (the transport: `request`, `ApiError`; endpoints live with their
   feature), `dates.ts` and `invalidate.ts`.
+  `dates.ts` **caches one `Intl.DateTimeFormat` per option set**, and that is not a
+  micro-optimisation: constructing one costs about a millisecond and the sheet asks for one per
+  cell, so a five-year Pattern was twelve thousand constructions and twenty-three seconds of blank
+  screen. Nothing else about the drawing was slow.
+  `invalidate.ts` also exports `invalidateRecord` — `["search", "compare"]`, the two reads that
+  cross every feature boundary. It is the one thing the leetcode feature shares with the rest of
+  the app, which is why its own invalidation calls it rather than becoming `invalidateAll` by
+  increments.
 - `types.ts` stays a single shared file at the root: it is the API's vocabulary, one payload
   references another, and splitting it per feature would only buy cross-imports. `index.css` is
   the single stylesheet, next to `main.tsx` that imports it.
+
+**The LeetCode workspace is the one laptop-first screen, and it keeps the substrate
+without the metaphor.** `/leetcode` and `/leetcode/:id` are one component — an index
+column and the problem beside it on `lg`, and the URL deciding which is the screen
+below it. It takes the three voices, the one surface, the square rules and the `ruled`
+writing field, and it takes **none** of the instrument: no time axis of problems, no
+channel per topic, no `paint()` verdict marks, no rate. A chart recorder drawn over a
+study log produces exactly the scoreboard the feature must not be — there is no count
+of problems solved as an achievement, no best week, and no streak of days practised.
+The one number on the screen is the size of the review queue, which is a workload
+rather than a score, and it is deliberately **not** a badge on the spine.
+
+The screenshot plate is the one box in the product. Everywhere else a thing is told
+apart from the canvas by a rule; an arbitrary screenshot brings its own white ground
+and its own edges, so it gets a 1px `tray` rule on all four sides or it bleeds into the
+page. Full size is a plain link to the image in a new tab — the browser's zoom, pan and
+save beat a hand-built lightbox, which is a keyboard trap waiting to be written. A
+pre-save preview is a `FileReader` **data:** URL and not `URL.createObjectURL`: helmet's
+default CSP allows `img-src 'self' data:` and does not allow `blob:`, so the obvious
+version renders nothing, silently.
+
+**A width utility cannot be overridden by writing it later in the className.** `w-auto`
+and `w-fit` next to `PRIMARY`'s own `w-full` are the same Tailwind utility, and which
+one wins is decided by the order Tailwind emits them, not the order they are written —
+`w-full` wins both. Wrap the control in an `inline-flex` box instead. The key on
+`/habits` gets away with `w-auto` only because it is a flex item with a sibling to
+shrink against.
 
 **Today is not a screen.** It is `/day/:date` with the date set to today. Logging this morning and
 fixing last Tuesday are the same job, so they are the same component — which is also why
@@ -447,8 +532,17 @@ gets a tray (`--c-tray`); a bare tray means nothing was asked of you, `missed` i
 on it and `unlogged` a **dotted** one. `--c-tray` exists as its own token because `--c-line` sat
 1.03:1 from the skipped fill, which made "skipped" and "nothing was asked" the same square. The
 vocabulary was verified in greyscale in both themes down to an 11px cell, which is where the dotted
-ring stops resolving — and that floor, not a layout limit, is why `/grid` offers no one-year range
-below `md`.
+ring stops resolving — and that floor, not a layout limit, is why `/grid` offers its long ranges
+(1y, 2y, 5y) only at `md` and up.
+
+Those long ranges draw at the **same 11px cell** as the year rather than shrinking to fit: the sheet
+has always lived in a horizontal scroller, so a longer range is further to scroll, never smaller to
+read. The row's name header is therefore `sticky left-0` at every width, not only on a phone — it is
+inside that one shared scroller, and scrolling five years to today used to carry every habit's name
+off the left edge, leaving a page of anonymous sheets whose text alternative went with them. It sits
+at `z-6`, above the sheet's own paper/ink/overlay layers: the sheet root is `relative` with `z:auto`
+and so opens no stacking context, and at `z-2` the two tied and the weekday axis printed straight
+through the habit's name.
 
 Colour tokens are applied as `var(--c-${habit.color_token})`, not through a token-to-class map.
 Note the `--c-` prefix: `@theme inline` in `index.css` does not emit `--color-*` custom properties,

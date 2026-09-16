@@ -30,12 +30,21 @@ export const useHabits = (includeArchived = false) =>
  * and paginated later: habit_logs is keyed (habit_id, date), so the cursor costs
  * nothing to build, and a habit with three years of writing behind it would
  * otherwise send all of it down a phone before the page painted.
+ *
+ * `from` moves where the paging STARTS. Without it the only way to reach the
+ * first month of a three-year habit is to press Older forty times, which is not
+ * navigation — it is the absence of it. It is the same `before` cursor the
+ * server already pages on, so jumping costs exactly one request and needs no
+ * offset, no total and no second endpoint.
+ *
+ * It is part of the query key, so each landing point is its own cached stream
+ * and stepping back to the latest does not re-fetch what was already read.
  */
-export const useHabitHistory = (id: Id) =>
+export const useHabitHistory = (id: Id, from?: IsoDate) =>
   useInfiniteQuery({
-    queryKey: ["history", id],
+    queryKey: ["history", id, from ?? null],
     queryFn: ({ pageParam }) => api.getHistory(id, pageParam),
-    initialPageParam: undefined as IsoDate | undefined,
+    initialPageParam: from,
     getNextPageParam: (last) => last.next_before ?? undefined,
   });
 

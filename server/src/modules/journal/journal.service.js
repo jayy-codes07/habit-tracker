@@ -50,3 +50,20 @@ export async function saveEntry(date, kind, entry) {
 export async function removeEntry(date, kind) {
   await query("DELETE FROM journal WHERE date = $1 AND kind = $2", [date, kind]);
 }
+
+/**
+ * How many days in a range were written on, and whether the month carries a
+ * reflection. Counts rather than rows: the year-on-year comparison wants a
+ * figure, and loading a year-old month's prose to call length on it would move
+ * a great deal of text to produce one integer.
+ */
+export async function countEntriesBetween(from, to) {
+  const { rows } = await query(
+    `SELECT count(*) FILTER (WHERE kind = 'day')::int   AS days,
+            count(*) FILTER (WHERE kind = 'month')::int AS reflections
+       FROM journal
+      WHERE date BETWEEN $1 AND $2`,
+    [from, to],
+  );
+  return rows[0];
+}

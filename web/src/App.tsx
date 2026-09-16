@@ -4,9 +4,11 @@ import { ErrorBox } from "./components/ErrorBox";
 import { useSession } from "./features/auth/queries";
 import { ApiError } from "./lib/api-client";
 import Day from "./routes/Day";
+import Find from "./routes/Find";
 import Grid from "./routes/Grid";
 import HabitHistory from "./routes/HabitHistory";
 import Habits from "./routes/Habits";
+import Leetcode from "./routes/Leetcode";
 import Login from "./routes/Login";
 import Review from "./routes/Review";
 import Tasks from "./routes/Tasks";
@@ -50,6 +52,16 @@ export default function App() {
               where you notice a habit has gone strange. */}
           <Route path="/habits/:id" element={<HabitHistory />} />
           <Route path="/tasks" element={<Tasks />} />
+          {/* The query lives in ?q=, so a search is shareable and — the one
+              that matters — the browser's Back button returns to the results
+              after opening one. */}
+          <Route path="/search" element={<Find />} />
+          {/* Both, as /day is: the workspace with nothing open, and the
+              workspace with one problem open. The URL holds the selection, so
+              a problem is linkable, survives a reload, and gets back and
+              forward for free. */}
+          <Route path="/leetcode" element={<Leetcode />} />
+          <Route path="/leetcode/:id" element={<Leetcode />} />
           {/* Both, as /day is: the bare path opens the current month. */}
           <Route path="/review" element={<Review />} />
           <Route path="/review/:month" element={<Review />} />
@@ -85,7 +97,7 @@ const Unreachable = ({ error, onRetry }: { error: unknown; onRetry: () => void }
  * THE SPINE — the instrument's one piece of persistent chrome, and the only
  * thing in the app that knows what the URLs are.
  *
- * Five screens, five words, and an axis. The five are positions ON that axis:
+ * Seven screens, seven words, and an axis. The seven are positions ON that axis:
  * the active one takes ink and raises a tick out of the rule, which is the same
  * reading the range dial uses on Pattern and the same reading a scale position
  * has anywhere. It is labelled with words rather than glyphs because obvious
@@ -102,8 +114,20 @@ const Unreachable = ({ error, onRetry }: { error: unknown; onRetry: () => void }
  *
  * Habits and Tasks sit last because you visit them to decide something rather
  * than to look at something; the three reading screens stay together. Settings
- * live at the foot of /habits — there are three of them, and a sixth position
- * for a thing you touch twice a year would cost a fifth of a small phone.
+ * live at the foot of /habits — there are three of them, and a position for a
+ * thing you touch twice a year would cost a sixth of a small phone.
+ *
+ * SIX, since the LeetCode workspace. That reverses the sizing argument above
+ * deliberately rather than by accident: Code is not a twice-a-year screen, it
+ * is the second thing this app is used for daily, and its review queue is the
+ * one list here that nobody goes looking for — an unattended queue is only
+ * worked if it is somewhere you pass. Six positions is 62px each on a 375px
+ * phone, still well clear of the 44px floor, and on the rail a sixth row costs
+ * nothing at all.
+ *
+ * It carries no count. A number in permanent chrome that you are meant to drive
+ * to zero is the first gamification mechanic, and the queue's size belongs on
+ * the screen that can also show you what is in it.
  */
 const SCREENS = [
   { to: "/", label: "Day" },
@@ -111,6 +135,19 @@ const SCREENS = [
   { to: "/review", label: "Review" },
   { to: "/habits", label: "Habits" },
   { to: "/tasks", label: "Tasks" },
+  { to: "/leetcode", label: "Code" },
+  /*
+   * SEVEN, since Find. Seven positions is 53px each on a 375px phone, still
+   * clear of the 44px floor, and on the rail a seventh row costs nothing.
+   *
+   * It earns a permanent position rather than an icon on one screen because it
+   * is the only thing here that is about the record as a whole: every other
+   * position is a way of looking at a period, and this is the way back to a
+   * thing when you have forgotten which period it was in. Behind a magnifier on
+   * the Day screen it would be findable only from the one screen you are least
+   * likely to be on when you want it.
+   */
+  { to: "/search", label: "Find" },
 ] as const;
 
 function Spine() {
@@ -119,6 +156,8 @@ function Spine() {
   const onReview = pathname.startsWith("/review");
   const onHabits = pathname.startsWith("/habits");
   const onTasks = pathname.startsWith("/tasks");
+  const onCode = pathname.startsWith("/leetcode");
+  const onFind = pathname.startsWith("/search");
   const active = onGrid
     ? "/grid"
     : onReview
@@ -127,7 +166,11 @@ function Spine() {
         ? "/habits"
         : onTasks
           ? "/tasks"
-          : "/";
+          : onCode
+            ? "/leetcode"
+            : onFind
+              ? "/search"
+              : "/";
 
   return (
     <nav

@@ -54,16 +54,31 @@ export async function withApi(run) {
     const cookie = setCookie.find((value) => value.startsWith(`${SESSION_COOKIE}=`))?.split(";")[0];
     if (!cookie) throw new Error("test login did not return a session cookie");
 
-    const api = (path, { body, headers, ...options } = {}) =>
-      request(path, {
+    /*
+     * A Buffer body is sent as-is.
+     *
+     * Everything in this API speaks JSON except one route — the screenshot
+     * upload, which takes raw image bytes — and without this branch there was
+     * no way to exercise it through the authenticated helper at all: the bytes
+     * arrived JSON.stringify'd as `{"type":"Buffer","data":[137,80,...]}`, so
+     * the only test that could be written was one that proved the harness
+     * mangles the body.
+     *
+     * `headers` still spreads last, so a caller sending a Buffer supplies its
+     * own content-type and that is what the server sees.
+     */
+    const api = (path, { body, headers, ...options } = {}) => {
+      const raw = Buffer.isBuffer(body);
+      return request(path, {
         ...options,
         headers: {
           cookie,
-          ...(body === undefined ? {} : { "content-type": "application/json" }),
+          ...(body === undefined || raw ? {} : { "content-type": "application/json" }),
           ...headers,
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(body === undefined ? {} : { body: raw ? body : JSON.stringify(body) }),
       });
+    };
 
     return run({ api, request, client });
   });

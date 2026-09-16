@@ -28,10 +28,11 @@
  *   product whose whole scoring model exists to make rest cost nothing.
  */
 import { useState, type MouseEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
+import { Choice } from "../components/Choice";
 import { ErrorBox } from "../components/ErrorBox";
-import { QUIET } from "../components/form";
+import { FIELD, QUIET } from "../components/form";
 import { Chevron } from "../components/icons";
 import { Skeleton } from "../components/Skeleton";
 import { HabitEditor } from "../features/habits/HabitEditor";
@@ -41,7 +42,7 @@ import { Sheet, type Cut } from "../features/habits/Sheet";
 import { useParkedScroller, useSheetCell } from "../features/habits/sheet-view";
 import { scheduleWords, tally } from "../features/habits/verdict";
 import { ApiError } from "../lib/api-client";
-import { daysBetween, formatDateShort } from "../lib/dates";
+import { addDays, daysBetween, formatDateShort } from "../lib/dates";
 import type { Habit, HistoryNote, HistoryPayload, IsoDate, Schedule } from "../types";
 
 /** How long, in the largest unit that does not flatter or belittle it. */
@@ -175,7 +176,13 @@ type Entry =
  * quietly write a new version — while a note goes to its own day, which is
  * where it can be fixed.
  */
-function timeline(data: HistoryPayload, notes: HistoryNote[], complete: boolean): Entry[] {
+function timeline(
+  data: HistoryPayload,
+  notes: HistoryNote[],
+  complete: boolean,
+  /** The day the stream was asked to start at, or null for the latest. */
+  on: IsoDate | null,
+): Entry[] {
   const habit = data.habit;
   const events: Entry[] = [];
 
@@ -202,9 +209,16 @@ function timeline(data: HistoryPayload, notes: HistoryNote[], complete: boolean)
    * the bottom of the first page, below writing it predates by months.
    */
   const floor = complete ? null : (notes[notes.length - 1]?.date ?? null);
-  const kept = floor === null ? events : events.filter((event) => event.date >= floor);
+  const inRange = (event: Entry) =>
+    (floor === null || event.date >= floor) &&
+    // And held back at the TOP when the stream was jumped: a reader who asked
+    // to start in 2024 should not find "Archived" from last week above it.
+    (on === null || event.date <= on);
 
-  return [...notes.map((note): Entry => ({ date: note.date, kind: "note", note })), ...kept].sort(
+  return [
+    ...notes.map((note): Entry => ({ date: note.date, kind: "note", note })),
+    ...events.filter(inRange),
+  ].sort(
     // Same day: the writing leads, and the change that made it possible follows.
     (a, b) => (a.date === b.date ? (a.kind === "note" ? -1 : 1) : a.date < b.date ? 1 : -1),
   );
@@ -278,6 +292,109 @@ function Stream({
   );
 }
 
+// --- getting back to an old part of it --------------------------------------
+
+/**
+ * Where the record is read FROM.
+ *
+ * A habit with three years behind it had exactly one way back to its first
+ * month: press Older forty times. That is not navigation, it is the absence of
+ * it — so this moves the same `before` cursor the server already pages on, and
+ * a jump costs one request rather than forty.
+ *
+ * Two controls for two different questions, which is why neither replaces the
+ * other. The years answer "roughly back then" and are one tap; the date field
+ * answers "the week my knee went" and is the only thing that can. It is a
+ * native `<input type="date">`, so the calendar, the locale and the keyboard
+ * entry are the platform's — and `min`/`max` are the habit's own life, because
+ * offering to jump to a day before the habit existed is offering an empty page.
+ *
+ * Not a timeline, and not a scrubber. A dragged handle over a multi-year record
+ * is a control that cannot be aimed, cannot be typed into and cannot be read
+ * back — three losses to buy an animation.
+ */
+function Jump({
+  on,
+  from,
+  to,
+  onJump,
+}: {
+  on: IsoDate | null;
+  from: IsoDate;
+  to: IsoDate;
+  onJump: (date: IsoDate | null) => void;
+}) {
+  const firstYear = Number(from.slice(0, 4));
+  const lastYear = Number(to.slice(0, 4));
+  // Only when there is more than one, and newest first — the record is read
+  // backwards everywhere else on this screen. Six is as many as the rail holds
+  // before the row wraps into something that has to be scanned; the field below
+  // reaches anything older, so nothing is out of reach.
+  const years = [];
+  for (let year = lastYear; year >= firstYear && years.length < 6; year -= 1) years.push(year);
+
+  return (
+    <section aria-labelledby="jump-heading" className="mt-6">
+      <h2 id="jump-heading" className="label text-muted">
+        Go to
+      </h2>
+
+      {years.length > 1 && (
+        <div role="group" aria-label="Jump to a year" className="mt-2 flex">
+          <Choice
+            type="radio"
+            name="jump-year"
+            checked={on === null}
+            onChange={() => onJump(null)}
+            label="The latest entries"
+          >
+            Latest
+          </Choice>
+          {years.map((year) => (
+            <Choice
+              key={year}
+              type="radio"
+              name="jump-year"
+              // The end of that year is where its reading starts, because the
+              // stream runs backwards. A year is selected when the cursor sits
+              // on its last day — which is exactly what clicking it sets.
+              checked={on !== null && on === `${year}-12-31`}
+              onChange={() => onJump(`${year}-12-31`)}
+              label={`Jump to the end of ${year}`}
+            >
+              {/* The whole year, not its last two digits. Beside "Latest" in a
+                  narrow rail, "25" reads as a count of something. */}
+              {year}
+            </Choice>
+          ))}
+        </div>
+      )}
+
+      <label htmlFor="jump-date" className="label text-muted mt-4 block">
+        Or a date
+      </label>
+      <input
+        id="jump-date"
+        type="date"
+        value={on ?? ""}
+        min={from}
+        max={to}
+        onChange={(event) => onJump(event.target.value || null)}
+        className={`${FIELD} mt-1`}
+      />
+
+      {on && (
+        <p className="label text-muted mt-3">
+          Reading back from {formatDateShort(on)} ·{" "}
+          <button type="button" onClick={() => onJump(null)} className="underline">
+            latest
+          </button>
+        </p>
+      )}
+    </section>
+  );
+}
+
 // --- the screen -------------------------------------------------------------
 
 const HistorySkeleton = () => (
@@ -291,18 +408,33 @@ const HistorySkeleton = () => (
 export default function HabitHistory() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const query = useHabitHistory(id!);
+  const [params, setParams] = useSearchParams();
   const [editing, setEditing] = useState(false);
+
+  /*
+   * The landing point lives in the URL, so a jump survives a reload and the
+   * browser's Back button undoes it. `on` is the newest day to READ, and the
+   * server's cursor is strictly-before, so it is handed the day after.
+   */
+  const on = params.get("on");
+  const query = useHabitHistory(id!, on ? addDays(on, 1) : undefined);
+  const jump = (date: IsoDate | null) => setParams(date ? { on: date } : {}, { replace: true });
 
   const first = query.data?.pages[0];
   const notes = query.data?.pages.flatMap((page) => page.notes) ?? [];
   const complete = !query.hasNextPage;
 
-  const entries = first ? timeline(first, notes, complete) : [];
+  const entries = first ? timeline(first, notes, complete, on) : [];
   const gone = query.error instanceof ApiError && query.error.status === 404;
 
   const cell = useSheetCell();
-  const scroller = useParkedScroller([first?.start, first?.weeks, cell]);
+  // The sheet parks where the stream is reading, so the drawing and the words
+  // are answering the same question. See useParkedScroller.
+  const parkAt =
+    first && on
+      ? Math.min(1, Math.max(0, (daysBetween(first.start, on) + 1) / (first.weeks * 7)))
+      : 1;
+  const scroller = useParkedScroller([first?.start, first?.weeks, cell, parkAt], parkAt);
 
   const pick = (event: MouseEvent<HTMLDivElement>) => {
     const date = (event.target as HTMLElement).closest<HTMLElement>("[data-date]")?.dataset.date;
@@ -458,6 +590,16 @@ export default function HabitHistory() {
                   Edit habit
                 </button>
               </div>
+              {/* Below the tally and the editor, because it acts on the stream
+                  rather than on the habit — and a control that changes what you
+                  are reading should not sit above the one that changes what you
+                  are keeping. */}
+              <Jump
+                on={on}
+                from={first.habit.start_date}
+                to={first.habit.archived_on ?? first.today}
+                onJump={jump}
+              />
               {/* One editor, one owner. Pausing, archiving, restoring, renaming
                   and rescheduling all live in that dialog already, and a second
                   set of buttons here would be a second place for the rules

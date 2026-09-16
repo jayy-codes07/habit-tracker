@@ -88,6 +88,9 @@ async function sweepFixtures(page: Page) {
     const dates = data.habit_logs.filter((log) => log.habit_id === habit.id).map((log) => log.date);
     await removeHabit(page, habit.id, dates);
   }
+
+  // Problems too, in both scopes — an archived orphan is still an orphan.
+  await sweepProblems(page);
 }
 
 const pause = (page: Page, id: string) =>
@@ -1514,5 +1517,377 @@ test("a target freezes the unit as surely as a measurement does", async ({ page 
     expect(refused.status()).toBe(409);
   } finally {
     await removeHabit(page, id);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The LeetCode workspace
+//
+// Removing a fixture takes three calls, and the shape is removeHabit's: a
+// problem can only be deleted while it carries nothing worth keeping, so its
+// screenshot and its notes go first and the row follows. Anything left behind
+// would sit in the Archived view of a real database for ever — these tests run
+// against the development one.
+// ---------------------------------------------------------------------------
+
+/** A real 1x1 PNG. Base64, so it can be decoded inside the page with atob(). */
+const PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+interface ProblemRow {
+  id: string;
+  number: number | null;
+  title: string;
+  ai_assisted: boolean;
+  reviewed_on: IsoDate | null;
+  screenshot_bytes: number | null;
+}
+
+/** Only this suite's own rows, in whichever scope was asked for. */
+const problemsNamed = async (page: Page, scope = "") =>
+  (await api<{ problems: ProblemRow[] }>(page, "GET", `/leetcode${scope}`)).problems.filter((row) =>
+    row.title.startsWith(PREFIX),
+  );
+
+async function makeProblem(page: Page, title: string, fields: Record<string, unknown> = {}) {
+  const today = await serverToday(page);
+  const { problem } = await api<{ problem: ProblemRow }>(page, "POST", "/leetcode", {
+    title: `${PREFIX}${title}`,
+    difficulty: "medium",
+    solved_on: today,
+    ...fields,
+  });
+  return { id: problem.id, today };
+}
+
+/**
+ * Notes and a screenshot make a problem a record, and a record will not delete —
+ * so they go first, exactly as a habit's logs do before the habit.
+ */
+async function removeProblem(page: Page, id: string) {
+  await page.request.fetch(`/api/leetcode/${id}/screenshot`, { method: "DELETE" });
+  await page.request.fetch(`/api/leetcode/${id}`, {
+    method: "PATCH",
+    data: { approach: null, solution: null },
+  });
+  await page.request.fetch(`/api/leetcode/${id}`, { method: "DELETE" });
+}
+
+/** Every problem this suite made, in both scopes — including an archived one. */
+async function sweepProblems(page: Page) {
+  for (const scope of ["", "?scope=archived"]) {
+    for (const problem of await problemsNamed(page, scope)) {
+      await removeProblem(page, problem.id);
+    }
+  }
+}
+
+/**
+ * Ctrl+V with an image on the clipboard, which is the gesture this whole
+ * feature is shaped around.
+ *
+ * Dispatched on `document` because that is where a real paste lands when no
+ * editable element has focus, and because the handler under test listens there
+ * for exactly that reason — a React onPaste on a wrapper div never sees an
+ * event whose target is body, and reads as though it would. Decoded with atob()
+ * rather than fetched from a data: URL so nothing here depends on connect-src.
+ */
+async function pasteImage(page: Page) {
+  await page.evaluate((base64) => {
+    const binary = atob(base64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const file = new File([bytes], "statement.png", { type: "image/png" });
+
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    document.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }),
+    );
+  }, PNG_BASE64);
+}
+
+/**
+ * A screenshot held in the browser is a screenshot that is gone on the next
+ * reload.
+ *
+ * The obvious build of this keeps the pasted image as an object URL or in
+ * localStorage, and it demonstrates perfectly — the plate appears the instant
+ * you paste. Then you come back three months later and every problem statement
+ * is a broken image, which is the one thing the feature existed to prevent. So
+ * this walks the real path: record, paste, save, reload, and then read the row
+ * back through the API to prove the bytes are on the server rather than in a
+ * tab that is about to be closed.
+ */
+test("a pasted screenshot survives a reload and stays with its problem", async ({ page }) => {
+  await signIn(page);
+
+  try {
+    await page.goto("/leetcode");
+    await loaded(page);
+    await page.getByRole("button", { name: "Record a problem" }).click();
+
+    const dialog = page.locator("dialog[open]");
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel("Number", { exact: true }).fill("146");
+    await dialog.getByLabel("Title", { exact: true }).fill(`${PREFIX}LRU Cache`);
+    await choose(dialog, "medium");
+    await dialog.getByLabel("Topics", { exact: true }).fill("hash-table, design");
+
+    await pasteImage(page);
+    await expect(
+      dialog.getByRole("img", { name: /Chosen screenshot/ }),
+      "the paste has to show something, or nobody can tell it landed",
+    ).toBeVisible();
+
+    await dialog.getByRole("button", { name: "Record it" }).click();
+    await expect(dialog).toHaveCount(0);
+
+    // Recording opens the problem, and the URL IS the problem.
+    await expect(page.getByRole("heading", { name: `${PREFIX}LRU Cache` })).toBeVisible();
+    await expect(page).toHaveURL(/\/leetcode\/\d+$/);
+
+    const plate = page.getByRole("img", { name: /Problem statement for #146/ });
+    await expect(plate, "the plate paints from the server, not from the clipboard").toBeVisible();
+
+    // The whole point: a full reload, with nothing left in memory.
+    await page.reload();
+    await loaded(page);
+    await expect(plate, "and it is still there afterwards").toBeVisible();
+
+    const [saved] = await problemsNamed(page);
+    expect(saved?.screenshot_bytes, "the bytes are stored against the row").toBeGreaterThan(0);
+
+    const served = await page.request.fetch(`/api/leetcode/${saved?.id}/screenshot`);
+    expect(served.status(), "and come back from the row's own endpoint").toBe(200);
+    expect(served.headers()["content-type"], "as what they are").toBe("image/png");
+  } finally {
+    await sweepProblems(page);
+  }
+});
+
+/**
+ * A deep link has to survive a reload, or a problem is not a place.
+ *
+ * /leetcode/:id renders the same component as /leetcode with the detail bound
+ * to the id, which is only a route away from being a tab that resets to the
+ * list every time the page is refreshed — and the whole reason to record a
+ * problem is to be able to send yourself back to it months later.
+ */
+test("a problem opened by its own URL is still there after a reload", async ({ page }) => {
+  await signIn(page);
+  const { id } = await makeProblem(page, "Trapping Rain Water", { number: 42, difficulty: "hard" });
+
+  try {
+    // Straight to the URL, with no list navigated through first.
+    await page.goto(`/leetcode/${id}`);
+    await loaded(page);
+    await expect(page.getByRole("heading", { name: `${PREFIX}Trapping Rain Water` })).toBeVisible();
+
+    await page.reload();
+    await loaded(page);
+    await expect(
+      page.getByRole("heading", { name: `${PREFIX}Trapping Rain Water` }),
+      "a reload on a deep link must not fall back to the list",
+    ).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/leetcode/${id}$`));
+  } finally {
+    await sweepProblems(page);
+  }
+});
+
+/**
+ * The review queue is derived, and a derived queue is exactly the one that can
+ * be right in the database and wrong on the screen.
+ *
+ * Marking something reviewed has to take it out of the list you are looking at
+ * and undoing has to put it back, both without a reload and both agreeing with
+ * what the API says. A stored review_status would let the two drift apart; this
+ * walks the whole loop against one row and checks the screen and the server at
+ * every step.
+ */
+test("marking reviewed empties the queue and undoing refills it", async ({ page }) => {
+  await signIn(page);
+  const { id } = await makeProblem(page, "Word Ladder", { number: 127, ai_assisted: true });
+
+  try {
+    await page.goto("/leetcode");
+    await loaded(page);
+
+    const queue = page.getByLabel("Needs review", { exact: true }).locator("xpath=..");
+    // Scoped to the index: on a wide screen the pane beside it shows the queue
+    // as well, so a bare li matches the same problem twice.
+    const row = page
+      .getByRole("list", { name: "Recorded problems" })
+      .locator("li", { hasText: `${PREFIX}Word Ladder` });
+
+    await queue.click();
+    await expect(row, "an AI-assisted problem starts in the queue").toHaveCount(1);
+
+    await page.goto(`/leetcode/${id}`);
+    await loaded(page);
+    await page.getByRole("button", { name: "Mark reviewed" }).click();
+
+    await expect(
+      page.getByRole("button", { name: "Undo review" }),
+      "the one action becomes its own undo",
+    ).toBeVisible();
+    await expect
+      .poll(async () => (await problemsNamed(page))[0]?.reviewed_on, {
+        message: "and the server records the day it happened",
+      })
+      .toBe(await serverToday(page));
+
+    // Back to the queue, which must have emptied itself without a reload.
+    await page.goto("/leetcode");
+    await loaded(page);
+    await queue.click();
+    await expect(row, "a reviewed problem leaves the queue").toHaveCount(0);
+
+    // Undo, and it comes back to exactly where it was.
+    await page.goto(`/leetcode/${id}`);
+    await loaded(page);
+    await page.getByRole("button", { name: "Undo review" }).click();
+    await expect(page.getByRole("button", { name: "Mark reviewed" })).toBeVisible();
+
+    await page.goto("/leetcode");
+    await loaded(page);
+    await queue.click();
+    await expect(row, "undoing puts it back rather than inventing a third state").toHaveCount(1);
+
+    expect((await problemsNamed(page))[0]?.reviewed_on, "and clears the date again").toBeNull();
+  } finally {
+    await sweepProblems(page);
+  }
+});
+
+/**
+ * Archiving has to move a problem between two lists, not just dim it.
+ *
+ * Every read on the server filters archived_at IS NULL, so a row that stayed in
+ * the working list after being archived would be a client cache that never
+ * heard about the write — the failure invalidation exists to prevent, and one
+ * no server test can see.
+ */
+test("archiving moves a problem to Archived, and restoring brings it back", async ({ page }) => {
+  await signIn(page);
+  const { id } = await makeProblem(page, "Palindrome Number", { number: 9, difficulty: "easy" });
+
+  try {
+    const all = page.getByLabel("All problems", { exact: true }).locator("xpath=..");
+    const archived = page.getByLabel("Archived", { exact: true }).locator("xpath=..");
+    const row = page
+      .getByRole("list", { name: "Recorded problems" })
+      .locator("li", { hasText: `${PREFIX}Palindrome Number` });
+
+    await page.goto(`/leetcode/${id}`);
+    await loaded(page);
+    await page.getByRole("button", { name: "Archive", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Restore" })).toBeVisible();
+
+    await page.goto("/leetcode");
+    await loaded(page);
+    await expect(row, "gone from the working list").toHaveCount(0);
+
+    await archived.click();
+    await expect(row, "and found under Archived").toHaveCount(1);
+
+    await page.goto(`/leetcode/${id}`);
+    await loaded(page);
+    await page.getByRole("button", { name: "Restore" }).click();
+    await expect(page.getByRole("button", { name: "Archive", exact: true })).toBeVisible();
+
+    await page.goto("/leetcode");
+    await loaded(page);
+    await all.click();
+    await expect(row, "restoring returns it to where it was").toHaveCount(1);
+  } finally {
+    await sweepProblems(page);
+  }
+});
+
+/**
+ * Archiving a problem that was still waiting to be reviewed took the whole pane
+ * down with it.
+ *
+ * "Needs review" folds in "and it is in the working list", because a queue must
+ * not offer you something you have put away. The review line read that same
+ * answer as "this has been reviewed", and went looking for the date it was
+ * reviewed on — which was null, so the render threw and the screen went blank
+ * on the click that archived it. Two questions, and only one of them is about
+ * the date.
+ */
+test("archiving a problem that still needs review does not blank the page", async ({ page }) => {
+  await signIn(page);
+  const { id } = await makeProblem(page, "Course Schedule", { number: 207, ai_assisted: true });
+
+  try {
+    await page.goto(`/leetcode/${id}`);
+    await loaded(page);
+    await expect(page.getByRole("button", { name: "Mark reviewed" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Archive", exact: true }).click();
+
+    await expect(
+      page.getByRole("button", { name: "Restore" }),
+      "the pane has to survive its own archive",
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: `${PREFIX}Course Schedule` }),
+      "and still be the problem it was",
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Mark reviewed" }),
+      "unreviewed is unreviewed, archived or not",
+    ).toBeVisible();
+  } finally {
+    await sweepProblems(page);
+  }
+});
+
+/**
+ * Notes save when you leave the field, and the field has to belong to the
+ * problem that is open.
+ *
+ * Both note fields are plain local state seeded from the loaded row, which is
+ * the shape that carries the last problem's text into the next one — the bug
+ * the journal already had once, fixed there with a key on the date. Here the
+ * key is the problem, and this is what says so.
+ */
+test("approach notes save on blur and do not follow you to the next problem", async ({ page }) => {
+  await signIn(page);
+  const first = await makeProblem(page, "Two Sum", { number: 1, difficulty: "easy" });
+  const second = await makeProblem(page, "Number of Islands", { number: 200 });
+
+  try {
+    await page.goto(`/leetcode/${first.id}`);
+    await loaded(page);
+
+    const approach = page.getByLabel("My approach to this problem");
+    await approach.fill("Hash map of complement to index.");
+    // Blur is the save. Clicking the heading is what a person does next.
+    await page.getByRole("heading", { name: `${PREFIX}Two Sum` }).click();
+
+    await expect
+      .poll(
+        async () => {
+          const { problem } = await api<{ problem: { approach: string | null } }>(
+            page,
+            "GET",
+            `/leetcode/${first.id}`,
+          );
+          return problem.approach;
+        },
+        { message: "leaving the field is what saves it" },
+      )
+      .toBe("Hash map of complement to index.");
+
+    await page.goto(`/leetcode/${second.id}`);
+    await loaded(page);
+    await expect(
+      page.getByLabel("My approach to this problem"),
+      "the next problem starts from its own text, not the last one's",
+    ).toHaveValue("");
+  } finally {
+    await sweepProblems(page);
   }
 });

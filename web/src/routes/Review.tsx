@@ -35,7 +35,7 @@ import { ICON_BUTTON } from "../components/form";
 import { Chevron } from "../components/icons";
 import { Skeleton } from "../components/Skeleton";
 import { useSaveMonthJournal } from "../features/journal/queries";
-import { useReview } from "../features/overview/queries";
+import { useCompare, useReview } from "../features/overview/queries";
 import {
   addMonths,
   browserToday,
@@ -46,7 +46,7 @@ import {
   isoWeekday,
   monthOf,
 } from "../lib/dates";
-import type { IsoDate, IsoMonth, JournalEntry, ReviewHabit } from "../types";
+import type { IsoDate, IsoMonth, JournalEntry, MonthFacts, ReviewHabit } from "../types";
 
 /**
  * A rate as a whole number, without ever flattering it. 0.996 is not a perfect
@@ -371,6 +371,102 @@ function DaysWritten({ days }: { days: JournalEntry[] }) {
   );
 }
 
+// --- the same month, a year apart -------------------------------------------
+
+/**
+ * One measure, in both years. Counts only.
+ *
+ * `previous` is written FIRST, on the left, because time runs left to right
+ * here as it does on every sheet in this product. That is also the quiet reason
+ * there is no arrow: two figures in chronological order are a record, and the
+ * same two with a direction stamped between them are a verdict on a year of
+ * someone's life.
+ */
+const MEASURES: { key: string; label: string; of: (facts: MonthFacts) => number | boolean }[] = [
+  { key: "written", label: "days written", of: (facts) => facts.journal_days },
+  { key: "reflection", label: "reflection", of: (facts) => facts.reflection },
+  { key: "habits", label: "habits", of: (facts) => facts.habits },
+  // Logged days, not the verdicts above — see MonthFacts. "not logged" cannot
+  // appear here: it is a judgement about a schedule, and a schedule that has
+  // since been edited would change what a year-old month is said to have done.
+  { key: "done", label: "days done", of: (facts) => facts.habit_days.done },
+  { key: "missed", label: "days missed", of: (facts) => facts.habit_days.missed },
+  { key: "skipped", label: "days skipped", of: (facts) => facts.habit_days.skipped },
+  { key: "tasks", label: "tasks done", of: (facts) => facts.tasks.completed },
+  { key: "problems", label: "problems", of: (facts) => facts.leetcode },
+];
+
+/** A boolean is a fact too, and "—" is how this product says none. */
+const figure = (value: number | boolean) =>
+  typeof value === "boolean" ? (value ? "yes" : "—") : String(value);
+
+/**
+ * The same month, a year ago, beside this one.
+ *
+ * It is here rather than on its own screen because it is a reading of a month,
+ * and /review is where a month is read. It is small and it is at the foot for
+ * the same reason: the month you lived is the subject, and last year is context
+ * for it.
+ *
+ * It says nothing when there is no record from a year ago. A column of zeroes
+ * reads as a year that went badly, which is the one thing a month with no data
+ * in it definitely does not mean.
+ */
+function YearAgo({ month }: { month: IsoMonth }) {
+  const query = useCompare(month);
+  const data = query.data;
+
+  // Silent while loading and silent on failure: this is context beside the
+  // month, and an error box for it would put a failure notice on a screen whose
+  // actual subject loaded perfectly well.
+  if (!data || !data.previous.present) return null;
+
+  return (
+    <section aria-labelledby="year-ago-heading" className="mt-10">
+      <h2 id="year-ago-heading" className="label text-ink border-baseline border-b pb-2">
+        A year ago
+      </h2>
+
+      <table className="mt-3 w-full">
+        <caption className="sr-only">
+          {formatMonthLong(data.previous.month)} and {formatMonthLong(month)}, side by side
+        </caption>
+        <thead>
+          <tr className="label text-muted">
+            <th scope="col" className="w-full text-left font-normal">
+              <span className="sr-only">Measure</span>
+            </th>
+            <th scope="col" className="px-2 pb-1 text-right font-normal whitespace-nowrap">
+              {data.previous.month.slice(0, 4)}
+            </th>
+            <th scope="col" className="pb-1 text-right font-normal whitespace-nowrap">
+              {month.slice(0, 4)}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {MEASURES.map((measure) => (
+            <tr key={measure.key} className="border-baseline border-t">
+              <th scope="row" className="label text-muted py-1.5 text-left font-normal">
+                {measure.label}
+              </th>
+              <td className="font-mono text-meta text-muted px-2 py-1.5 text-right">
+                {figure(measure.of(data.previous))}
+              </td>
+              {/* The month on screen takes ink; the year behind it does not.
+                  That is the only distinction drawn between them, and it is
+                  about which one you are reading, not which one did better. */}
+              <td className="font-mono text-meta text-ink py-1.5 text-right">
+                {figure(measure.of(data.current))}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 // --- the screen -------------------------------------------------------------
 
 const ReviewSkeleton = () => (
@@ -538,6 +634,8 @@ export default function Review() {
                   )}
                 </p>
               </section>
+
+              <YearAgo month={month} />
             </div>
 
             <div className="mt-12 lg:col-start-2 lg:row-start-2 lg:mt-14">

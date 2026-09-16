@@ -22,12 +22,21 @@ import { useCallback, useEffect, useRef, useSyncExternalStore, type RefObject } 
  * seven rows that could be parked on seven different weeks, so a column no
  * longer meant a date; the caller owns the element for exactly that reason, and
  * this owns only the rule.
+ *
+ * `at` moves where it parks, as a fraction of the sheet's width. It exists for
+ * one caller: the habit history, where jumping to an old date has to move the
+ * drawing as well as the stream — a screen that says it went to 2024 while the
+ * sheet still shows this week is showing two different answers to one question.
+ * The date is centred rather than put at the left edge, so the weeks either
+ * side of it are the context they are there to be. Overshooting in either
+ * direction is fine: the browser clamps scrollLeft.
  */
-export function useParkedScroller(deps: unknown[]): RefObject<HTMLDivElement | null> {
+export function useParkedScroller(deps: unknown[], at = 1): RefObject<HTMLDivElement | null> {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const element = ref.current;
-    if (element) element.scrollLeft = element.scrollWidth;
+    if (element)
+      element.scrollLeft = element.scrollWidth * at - (at < 1 ? element.clientWidth / 2 : 0);
     // The caller decides what invalidates the parking — the payload's own start
     // and week count, never the requested range, so this cannot fire against
     // placeholder cells and a scrollWidth that is about to change.

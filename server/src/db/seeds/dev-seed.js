@@ -375,6 +375,117 @@ function firstOfMonth(monthsAgo) {
 }
 
 // ---------------------------------------------------------------------------
+// LeetCode problems
+//
+// Shaped around the one workflow the table has: ai_assisted AND reviewed_on IS
+// NULL is the review queue, so the fixture holds two rows sitting in it, one
+// that was in it and has been reviewed, two that were never in it, one with no
+// number or URL at all, and one archived. That is every state the workspace can
+// paint.
+//
+// No screenshots. They are bytea, and a deterministic text seed cannot carry
+// one honestly — an invented 200-byte PNG would prove the column stores bytes
+// and teach nothing about the screen. Paste a real one in once the app is up.
+// ---------------------------------------------------------------------------
+
+const problems = [
+  {
+    number: 146,
+    title: "LRU Cache",
+    difficulty: "medium",
+    topics: ["hash-table", "linked-list", "design"],
+    url: "https://leetcode.com/problems/lru-cache/",
+    solved_days_ago: 2,
+    ai_assisted: true,
+    reviewed_days_ago: null,
+    approach:
+      "Hash map to the node, doubly linked list for recency. I had the map part " +
+      "but not the sentinel head/tail trick that removes the null checks.",
+    solution: null,
+  },
+  {
+    number: 239,
+    title: "Sliding Window Maximum",
+    difficulty: "hard",
+    topics: ["deque", "sliding-window"],
+    url: "https://leetcode.com/problems/sliding-window-maximum/",
+    solved_days_ago: 5,
+    ai_assisted: true,
+    reviewed_days_ago: null,
+    approach: "Monotonic deque holding indices. Still cannot derive why it is O(n) unprompted.",
+    solution: null,
+  },
+  {
+    number: 42,
+    title: "Trapping Rain Water",
+    difficulty: "hard",
+    topics: ["two-pointers", "dynamic-programming"],
+    url: "https://leetcode.com/problems/trapping-rain-water/",
+    solved_days_ago: 16,
+    ai_assisted: true,
+    reviewed_days_ago: 3,
+    approach: "Two pointers moving inward from the shorter side. Re-derived it on review.",
+    solution:
+      "def trap(h):\n    l, r = 0, len(h) - 1\n    lm = rm = out = 0\n" +
+      "    while l < r:\n        if h[l] < h[r]:\n            lm = max(lm, h[l])\n" +
+      "            out += lm - h[l]\n            l += 1\n        else:\n" +
+      "            rm = max(rm, h[r])\n            out += rm - h[r]\n            r -= 1\n" +
+      "    return out",
+  },
+  {
+    number: 1,
+    title: "Two Sum",
+    difficulty: "easy",
+    topics: ["array", "hash-table"],
+    url: "https://leetcode.com/problems/two-sum/",
+    solved_days_ago: 23,
+    ai_assisted: false,
+    reviewed_days_ago: null,
+    approach: null,
+    solution: null,
+  },
+  {
+    number: 200,
+    title: "Number of Islands",
+    difficulty: "medium",
+    topics: ["graph", "bfs", "dfs"],
+    url: "https://leetcode.com/problems/number-of-islands/",
+    solved_days_ago: 30,
+    ai_assisted: false,
+    reviewed_days_ago: null,
+    approach: "Flood fill, sinking each island as I count it so no visited set is needed.",
+    solution: "for each cell: if land -> count += 1; dfs(cell) sets every reachable land to water",
+  },
+  {
+    // No number and no URL: a contest question, which is the case that proves
+    // both columns are genuinely optional.
+    number: null,
+    title: "Weekly contest — grid paths with obstacles",
+    difficulty: "medium",
+    topics: ["dynamic-programming"],
+    url: null,
+    solved_days_ago: 11,
+    ai_assisted: false,
+    reviewed_days_ago: null,
+    approach: "Straight 2D DP. Lost time to the obstacle-on-the-start-cell edge case.",
+    solution: null,
+  },
+  {
+    number: 9,
+    title: "Palindrome Number",
+    difficulty: "easy",
+    topics: ["math"],
+    url: "https://leetcode.com/problems/palindrome-number/",
+    solved_days_ago: 34,
+    ai_assisted: false,
+    reviewed_days_ago: null,
+    approach: null,
+    solution: null,
+    archived_days_ago: 9,
+  },
+];
+
+// ---------------------------------------------------------------------------
 // Insert
 // ---------------------------------------------------------------------------
 
@@ -387,7 +498,8 @@ async function seed() {
     // RESTART IDENTITY keeps ids stable across runs. habit_schedules and
     // habit_logs would fall to CASCADE anyway; naming them is documentation.
     await client.query(
-      "TRUNCATE habits, habit_schedules, habit_logs, tasks, journal RESTART IDENTITY CASCADE",
+      "TRUNCATE habits, habit_schedules, habit_logs, tasks, journal, leetcode_problems" +
+        " RESTART IDENTITY CASCADE",
     );
 
     const statusCounts = { done: 0, missed: 0, skipped: 0 };
@@ -467,6 +579,28 @@ async function seed() {
       ]);
     }
 
+    for (const problem of problems) {
+      await client.query(
+        `INSERT INTO leetcode_problems
+           (number, title, difficulty, topics, url, solved_on, ai_assisted, reviewed_on,
+            approach, solution, archived_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          problem.number,
+          problem.title,
+          problem.difficulty,
+          problem.topics,
+          problem.url,
+          addDays(TODAY, -problem.solved_days_ago),
+          problem.ai_assisted,
+          problem.reviewed_days_ago === null ? null : addDays(TODAY, -problem.reviewed_days_ago),
+          problem.approach,
+          problem.solution,
+          problem.archived_days_ago ? instantOn(addDays(TODAY, -problem.archived_days_ago)) : null,
+        ],
+      );
+    }
+
     return { statusCounts, scheduleCount, measuredCount };
   });
 
@@ -479,6 +613,10 @@ async function seed() {
   console.log(`[seed]             done ${done} / missed ${missed} / skipped ${skipped}`);
   console.log(`[seed]             ${counts.measuredCount} carrying a measured value`);
   console.log(`[seed] tasks       ${tasks.length}`);
+  console.log(
+    `[seed] leetcode    ${problems.length} problems` +
+      ` (${problems.filter((p) => p.ai_assisted && p.reviewed_days_ago === null).length} needing review)`,
+  );
   console.log(
     `[seed] journal     ${Object.keys(dayEntries).length} day + ${monthEntries.length} month`,
   );
@@ -504,6 +642,11 @@ async function seed() {
  *             through, and logs covering every measured state there is —
  *             over target, under it, done with no value at all, missed with a
  *             value, missed without one, and skipped with one
+ *
+ *   leetcode  every state the review queue has: two AI-assisted and unreviewed
+ *             (146, 239 — the queue), one AI-assisted and reviewed (42), three
+ *             never AI-assisted, one with no number and no URL, and one
+ *             archived. No screenshots — see the note above the data.
  */
 
 try {

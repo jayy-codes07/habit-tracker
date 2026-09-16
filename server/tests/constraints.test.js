@@ -23,6 +23,7 @@ import {
   makeHabit,
   makeJournal,
   makeLog,
+  makeProblem,
   makeSchedule,
   makeTask,
   withRollback,
@@ -300,6 +301,85 @@ const cases = [
       await makeJournal({ date: "2026-03-02", kind: "day" });
     },
   ],
+
+  // --- leetcode_problems ---
+  ["a blank problem title", "leetcode_problems_title_not_blank", () => makeProblem({ title: " " })],
+  [
+    "a problem title over 200 characters",
+    "leetcode_problems_title_not_blank",
+    () => makeProblem({ title: LONG(201) }),
+  ],
+  [
+    "a difficulty outside the three",
+    "leetcode_problems_difficulty_valid",
+    () => makeProblem({ difficulty: "expert" }),
+  ],
+  ["problem number zero", "leetcode_problems_number_positive", () => makeProblem({ number: 0 })],
+  [
+    "more than eight topics",
+    "leetcode_problems_topics_valid",
+    () => makeProblem({ topics: ["a", "b", "c", "d", "e", "f", "g", "h", "i"] }),
+  ],
+  [
+    "a blank topic",
+    "leetcode_problems_topics_valid",
+    () => makeProblem({ topics: ["graph", "  "] }),
+  ],
+  [
+    "the same topic twice",
+    "leetcode_problems_topics_valid",
+    () => makeProblem({ topics: ["dp", "dp"] }),
+  ],
+  [
+    "a topic over 30 characters",
+    "leetcode_problems_topics_valid",
+    () => makeProblem({ topics: [LONG(31)] }),
+  ],
+  // The one constraint here that is a security control rather than a tidiness
+  // rule: this column is rendered into an href.
+  [
+    "a javascript: problem URL",
+    "leetcode_problems_url_absolute",
+    () => makeProblem({ url: "javascript:alert(1)" }),
+  ],
+  [
+    "a relative problem URL",
+    "leetcode_problems_url_absolute",
+    () => makeProblem({ url: "/problems/two-sum/" }),
+  ],
+  [
+    "an approach over 20000 characters",
+    "leetcode_problems_approach_length",
+    () => makeProblem({ approach: LONG(20001) }),
+  ],
+  [
+    "a solution over 40000 characters",
+    "leetcode_problems_solution_length",
+    () => makeProblem({ solution: LONG(40001) }),
+  ],
+  [
+    "a screenshot type with no bytes behind it",
+    "leetcode_problems_screenshot_whole",
+    () => makeProblem({ screenshot_type: "image/png" }),
+  ],
+  [
+    "screenshot bytes with no type to serve them as",
+    "leetcode_problems_screenshot_whole",
+    () => makeProblem({ screenshot: Buffer.from([1, 2, 3]), screenshot_bytes: 3 }),
+  ],
+  // SVG is script-capable and this app serves the bytes back from its own
+  // origin, so the allowlist is the thing standing between a stored file and
+  // stored XSS.
+  [
+    "an SVG screenshot",
+    "leetcode_problems_screenshot_type_valid",
+    () =>
+      makeProblem({
+        screenshot: Buffer.from("<svg/>"),
+        screenshot_type: "image/svg+xml",
+        screenshot_bytes: 6,
+      }),
+  ],
 ];
 
 // insertHabitRaw used to live here, to reach habits.target_value and habits.unit
@@ -316,7 +396,7 @@ describe("schema invariants", () => {
   it("covers every case the product depends on", () => {
     // A tripwire, not a metric: if a constraint is added to the schema without a
     // case here, this number is the reminder.
-    assert.equal(cases.length, 38);
+    assert.equal(cases.length, 53);
   });
 });
 

@@ -33,3 +33,18 @@ export const useReview = (month: IsoMonth) =>
     queryFn: () => api.getReview(month),
     placeholderData: keepPreviousData,
   });
+
+/**
+ * This month beside the same month last year.
+ *
+ * A separate query from useReview on purpose: it is a different shape, a
+ * different question and a slower-changing answer — a year-old month does not
+ * move — so it caches on its own and a review that never scrolls to it never
+ * pays for it twice.
+ */
+export const useCompare = (month: IsoMonth) =>
+  useQuery({
+    queryKey: ["compare", month],
+    queryFn: () => api.getCompare(month),
+    placeholderData: keepPreviousData,
+  });

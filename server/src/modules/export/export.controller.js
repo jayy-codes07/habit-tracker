@@ -32,6 +32,22 @@ const TABLES = {
   tasks: `SELECT id, title, due_date, completed, completed_at, created_at, updated_at, archived_at
             FROM tasks ORDER BY id`,
   journal: `SELECT id, date, kind, entry, updated_at FROM journal ORDER BY kind, date`,
+  /*
+   * The screenshot bytes are the one thing in the database this file does not
+   * carry, and the omission is named rather than hidden: screenshot_type and
+   * screenshot_bytes come out, so a restore can see exactly which rows are
+   * missing an image and how big it was.
+   *
+   * The reason is arithmetic, not principle. A few hundred problem statements
+   * is a few hundred megabytes, and res.json() builds the whole document in
+   * memory before it writes a byte — a backup that exhausts the heap is not a
+   * backup. `pg_dump` is what carries the images, and README says so.
+   */
+  leetcode_problems: `SELECT id, number, title, difficulty, topics, url, solved_on,
+                             ai_assisted, reviewed_on, approach, solution,
+                             screenshot_type, screenshot_bytes,
+                             created_at, updated_at, archived_at
+                        FROM leetcode_problems ORDER BY id`,
 };
 
 export async function exportAll(_req, res) {
@@ -55,8 +71,14 @@ export async function exportAll(_req, res) {
      * exactly as its schedule does. A version 1 file is still complete — its
      * habits.target_value belongs to every non-paused version of that habit,
      * which is what the column meant when one value covered all of time.
+     *
+     * 3: leetcode_problems joined the document. Purely additive — a version 2
+     * file is still complete for everything it describes — but it is the first
+     * version whose completeness has a caveat, and a consumer has to be able to
+     * tell which files can be missing image bytes. See the note beside the
+     * query above.
      */
-    version: 2,
+    version: 3,
     exported_at: exportedAt,
     ...Object.fromEntries(entries),
   });

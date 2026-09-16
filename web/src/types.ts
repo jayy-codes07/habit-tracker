@@ -389,6 +389,75 @@ export interface ReviewHabit {
   longest_streak: number;
 }
 
+/** leetcode_problems.difficulty — LeetCode's own three, and nothing else. */
+export type Difficulty = "easy" | "medium" | "hard";
+
+/**
+ * One solve, not one problem. Recording #146 again six months later is a second
+ * row, because it is a second thing that happened.
+ *
+ * TRAP: "needs review" is NOT a field here, and no field should ever be added
+ * for it. It is `ai_assisted && reviewed_on === null`, derived by
+ * `needsReview()` in features/leetcode/problems.ts and nowhere else. A stored
+ * status can disagree with the two facts that produce it; two facts cannot
+ * disagree with themselves.
+ *
+ * TRAP: `approach` and `solution` are absent from list rows and present on the
+ * detail read — the list deliberately does not carry a page of prose per row.
+ * Both are optional here for that reason, and `undefined` means "this came from
+ * the list" while `null` means "there is none".
+ */
+export interface Problem {
+  id: Id;
+  /** The LeetCode number, or null for a contest question that has none. */
+  number: number | null;
+  title: string;
+  difficulty: Difficulty;
+  /** Lower-cased and deduped by the server. Never null; an empty list is none. */
+  topics: string[];
+  url: string | null;
+  solved_on: IsoDate;
+  /** I had significant help. The only thing that puts a row in the queue. */
+  ai_assisted: boolean;
+  /** The day I went back over it, or null — which is a queue, not a failure. */
+  reviewed_on: IsoDate | null;
+  /**
+   * The size of the stored screenshot, or null when there is none. It stands in
+   * for "is there one": the bytes are never in a JSON payload, and asking the
+   * question any other way would mean fetching the image to find out.
+   */
+  screenshot_bytes: number | null;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+  /**
+   * The calendar day it was archived, in APP_TIMEZONE. Present on the archived
+   * scope and on a single problem read; absent from the working list, where
+   * every row has none. Derived on the server for the same reason a task's is —
+   * `archived_at` is an instant whose ISO string is UTC.
+   */
+  archived_on?: IsoDate | null;
+  /** Detail read only. See the trap above. */
+  approach?: string | null;
+  solution?: string | null;
+}
+
+/** GET /api/leetcode — both scopes answer with this shape. */
+export interface ProblemsPayload {
+  problems: Problem[];
+  /**
+   * The server's today, in APP_TIMEZONE. It dates a new entry and measures how
+   * long ago something was solved; the browser's clock does neither.
+   */
+  today: IsoDate;
+}
+
+/** GET /api/leetcode/:id */
+export interface ProblemPayload {
+  problem: Problem;
+  today: IsoDate;
+}
+
 /** GET /api/review/:month */
 export interface ReviewPayload {
   month: IsoMonth;
@@ -398,4 +467,83 @@ export interface ReviewPayload {
   tasks: { completed: number; created: number };
   /** `month` is the reflection anchored to the 1st; `days` are that month's day notes. */
   journal: { month: JournalEntry | null; days: JournalEntry[] };
+}
+
+/**
+ * What a search result came from. Four kinds rather than three, because a day
+ * entry and a monthly reflection share a table on the server and are two
+ * different screens here.
+ */
+export type SearchKind = "journal" | "reflection" | "note" | "problem";
+
+/**
+ * One hit. Deliberately flat and deliberately without a URL: the server owns
+ * the record, this app owns the routes, and a href baked into a payload is a
+ * route the server would have to be redeployed to rename. See hrefOf().
+ */
+export interface SearchResult {
+  kind: SearchKind;
+  /**
+   * The row it points at, when the kind needs one: the habit for a note, the
+   * problem for a solve. Null for journal and reflection, which are found by
+   * date alone.
+   */
+  id: Id | null;
+  /** The day it belongs to. A reflection's is the 1st of its month. */
+  date: IsoDate;
+  /** The habit's name, or the problem's. Null when the date is the title. */
+  title: string | null;
+  /**
+   * The matching fragment, whitespace collapsed and cut with ellipses. Null
+   * when the match was in the title itself and there is nothing left to quote.
+   */
+  snippet: string | null;
+  /** Problems only. An archived solve is still a record, so it is still found. */
+  archived?: boolean;
+}
+
+/** GET /api/search?q= */
+export interface SearchPayload {
+  query: string;
+  results: SearchResult[];
+  /** There were more matches than `limit`. Say so rather than implying a total. */
+  truncated: boolean;
+}
+
+/**
+ * One month, as counts of things that happened.
+ *
+ * TRAP: `habit_days` counts LOG ROWS, not the review's verdicts. There is no
+ * "not logged" here and there cannot be — that is a judgement about a schedule
+ * resolved day by day, and the whole point of these figures is that they mean
+ * the same thing in both years however the schedules moved in between. `done`
+ * therefore includes a day worked while unscheduled, which /review calls extra.
+ */
+export interface MonthFacts {
+  month: IsoMonth;
+  /**
+   * Whether there is any record for this month at all. A month with none is not
+   * a month that went badly, and a column of zeroes reads as the second.
+   */
+  present: boolean;
+  journal_days: number;
+  /** Whether the month was reflected on — the fact, never the prose. */
+  reflection: boolean;
+  habits: number;
+  habit_days: { done: number; missed: number; skipped: number };
+  tasks: { completed: number; created: number };
+  leetcode: number;
+}
+
+/**
+ * GET /api/compare/:month — this month beside the same month a year ago.
+ *
+ * Two sets of figures and no difference between them, by design. Nothing here
+ * says better or worse, and nothing downstream may compute it: a delta renders
+ * as an arrow, and an arrow is a verdict on a year of someone's life.
+ */
+export interface ComparePayload {
+  month: IsoMonth;
+  current: MonthFacts;
+  previous: MonthFacts;
 }

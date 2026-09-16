@@ -41,7 +41,7 @@ import type { GridHabit, GridPayload } from "../types";
  * "not logged" ring still resolve, and 26 columns of it is exactly the 358px a
  * 390px phone has.
  *
- * `wide` is the year, and it is a desktop range. A year of columns on a phone
+ * `wide` marks the long ranges, which are desktop ones. A year of columns on a phone
  * puts the cell at 6px, where the axis becomes an overlapping smear and the
  * dotted ring degrades into texture — the reading the sheet exists for stops
  * working before the layout does. Rather than ship a range that photographs
@@ -59,6 +59,22 @@ const RANGES = [
   { weeks: 12, label: "12w", title: "Last 12 weeks", cell: 17, gap: 2, wide: false },
   { weeks: 26, label: "26w", title: "Last 26 weeks", cell: 11, gap: 2, wide: false },
   { weeks: 52, label: "1y", title: "Last year", cell: 11, gap: 2, wide: true },
+  /*
+   * The long ranges, and they draw at the SAME 11px cell as the year rather
+   * than shrinking to fit.
+   *
+   * That is the whole reason they can exist. The sheet has always lived in a
+   * horizontal scroller, so a longer range makes the record further to scroll
+   * and never smaller to read — and 11px is the floor the state vocabulary was
+   * verified at, in greyscale, in both themes. A five-year sheet squeezed onto
+   * one screen would be 3px cells: a picture of a record rather than a record.
+   *
+   * They are offered only where a year is, for the same reason, and only when
+   * there is that much behind you — see deadLeadingWeeks, which dims a range no
+   * record reaches back to rather than opening it on empty columns.
+   */
+  { weeks: 104, label: "2y", title: "Last 2 years", cell: 11, gap: 2, wide: true },
+  { weeks: 261, label: "5y", title: "Last 5 years", cell: 11, gap: 2, wide: true },
 ];
 
 const DEFAULT_WEEKS = 12;
@@ -103,7 +119,7 @@ function HabitBlock({
   const tint = `var(--c-${habit.color_token})`;
 
   return (
-    <section className="pt-9 first:pt-0 lg:grid lg:grid-cols-[15rem_max-content] lg:items-start lg:gap-x-11 lg:pt-10">
+    <section className="pt-9 first:pt-0 lg:grid lg:grid-cols-[15rem_max-content] lg:gap-x-11 lg:pt-10">
       {/*
        * OUTSIDE the aria-hidden sheet below, and stuck to the left edge so a
        * year of columns cannot slide the name away from the row it names.
@@ -111,8 +127,27 @@ function HabitBlock({
        * On a wide screen it moves BESIDE the sheet instead of above it, which
        * is what makes every sheet start at the same x — and therefore what
        * makes the pen at today run unbroken down the whole page.
+       *
+       * It stays STUCK on a wide screen too, which it did not used to. The name
+       * column is inside the one shared scroller, so as soon as the sheet is
+       * wider than the viewport — which a year already is on a small laptop,
+       * and which the multi-year ranges are on any screen — scrolling to today
+       * carried every habit's name off the left edge and left a page of
+       * anonymous sheets. The name is the row's identity and it carries the
+       * summary line that IS the drawing's text alternative; it cannot be the
+       * thing that scrolls away.
+       *
+       * The cost is that the 18px weekday axis slides under this block at those
+       * widths. That is the right way round: the axis is aria-hidden furniture
+       * repeated seven times down the page, and at five years you are reading
+       * the shape of a run rather than which weekday it fell on.
        */}
-      <header className="bg-canvas sticky left-0 z-[2] w-fit max-w-full pr-3 pb-2 lg:static lg:pt-8">
+      {/* z-6, above every layer inside Sheet — paper 0, ink 2, overlay 4. The
+          sheet root is `relative` with z auto, so it opens no stacking context
+          and its inner layers compete with this header directly: at z-2 the two
+          tied, DOM order decided it, and the weekday axis printed straight
+          through the habit's name. */}
+      <header className="bg-canvas sticky left-0 z-[6] w-fit max-w-full pr-3 pb-2 lg:pt-8">
         <h2 className="flex items-center gap-2.5">
           <span
             aria-hidden="true"
@@ -267,7 +302,7 @@ export default function Grid() {
           {data ? `${formatDateShort(data.start)} – ${formatDateShort(data.end)}` : ""}
         </p>
 
-        <div role="group" aria-label="Range" className="mt-5 flex max-w-xs">
+        <div role="group" aria-label="Range" className="mt-5 flex max-w-sm">
           {RANGES.map((item) => {
             // Longer than anything on record: see deadLeadingWeeks.
             const empty = dead > 0 && item.weeks > weeks;
@@ -284,8 +319,9 @@ export default function Grid() {
                 // screen reader as well as the note below reaches everyone else.
                 label={empty ? `${item.title} — no record goes back that far` : item.title}
                 /*
-                 * A year needs 52 columns, which is a desktop picture, so it is
-                 * offered on one — except when it is the range being shown,
+                 * A year needs 52 columns and five years need 261, which is a
+                 * desktop picture, so they are offered on one — except when one
+                 * is the range being shown,
                  * which a link from a desktop can make true on a phone. A hidden
                  * chip that is also the selected one leaves every chip looking
                  * unselected.
@@ -312,7 +348,7 @@ export default function Grid() {
           <p className="label text-muted mt-3 hidden md:block">{NO_HISTORY}</p>
         ) : (
           <p className="label text-muted mt-3 md:hidden">
-            A full year fits on a wider screen; the squares would be too small to read here.
+            A year and more fit on a wider screen; the squares would be too small to read here.
           </p>
         )}
       </header>

@@ -118,6 +118,12 @@ const DIGEST_SQL = `
     UNION ALL
     SELECT format('journal|%s|%s|%s', j.date, j.kind, j.entry)
       FROM journal j
+    UNION ALL
+    SELECT format('leetcode|%s|%s|%s|%s|%s|%s|%s|%s',
+                  coalesce(p.number::text, '-'), p.title, p.difficulty, p.topics::text,
+                  p.solved_on, p.ai_assisted, coalesce(p.reviewed_on::text, '-'),
+                  coalesce(p.archived_at::text, '-'))
+      FROM leetcode_problems p
   )
   SELECT md5(string_agg(row, E'\\n' ORDER BY row)) AS digest, count(*)::int AS rows FROM seeded
 `;
@@ -172,7 +178,15 @@ describe("migration runner", () => {
     `);
     assert.deepEqual(
       rows.map((row) => row.table_name),
-      ["habit_logs", "habit_schedules", "habits", "journal", "schema_migrations", "tasks"],
+      [
+        "habit_logs",
+        "habit_schedules",
+        "habits",
+        "journal",
+        "leetcode_problems",
+        "schema_migrations",
+        "tasks",
+      ],
     );
   });
 });
@@ -202,7 +216,16 @@ describe("seed determinism", () => {
         (SELECT count(*)::int FROM habit_schedules WHERE schedule_kind = 'weekly')  AS weekly,
         (SELECT count(*)::int FROM habits          WHERE archived_at IS NOT NULL)   AS archived,
         (SELECT count(*)::int FROM habits h
-          WHERE (SELECT count(*) FROM habit_schedules s WHERE s.habit_id = h.id) > 1) AS versioned
+          WHERE (SELECT count(*) FROM habit_schedules s WHERE s.habit_id = h.id) > 1) AS versioned,
+        -- The LeetCode workspace has one workflow, and it is derived rather
+        -- than stored. A fixture with nothing in the queue, or with nothing
+        -- that ever left it, paints half the screen and proves neither half.
+        (SELECT count(*)::int FROM leetcode_problems
+          WHERE ai_assisted AND reviewed_on IS NULL AND archived_at IS NULL)     AS needs_review,
+        (SELECT count(*)::int FROM leetcode_problems
+          WHERE ai_assisted AND reviewed_on IS NOT NULL)                         AS reviewed,
+        (SELECT count(*)::int FROM leetcode_problems
+          WHERE archived_at IS NOT NULL)                                         AS retired
     `);
     const seeded = rows[0];
 
@@ -212,6 +235,9 @@ describe("seed determinism", () => {
     assert.ok(seeded.weekly > 0, "no weekly-target habit in the seed");
     assert.ok(seeded.archived > 0, "no archived habit in the seed");
     assert.ok(seeded.versioned >= 2, "fewer than two habits have a schedule history");
+    assert.ok(seeded.needs_review > 0, "nothing in the seed needs review");
+    assert.ok(seeded.reviewed > 0, "nothing in the seed has been reviewed");
+    assert.ok(seeded.retired > 0, "no archived problem in the seed");
   });
 
   it("never scores a day against a schedule that was not in force", async () => {

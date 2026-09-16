@@ -36,8 +36,34 @@ export const browserToday = (): IsoDate => {
   return local.toISOString().slice(0, 10);
 };
 
+/**
+ * One formatter per option set, kept.
+ *
+ * Constructing an Intl.DateTimeFormat is expensive — roughly a millisecond —
+ * and the sheet asks for one PER CELL, for the title a cell carries. At twelve
+ * weeks that is invisible; at five years across a page of habits it was twelve
+ * thousand constructions and twenty-three seconds of blank screen. Nothing else
+ * about the drawing was slow.
+ *
+ * The map cannot grow without bound: every caller below passes a literal option
+ * set, so there are as many entries as there are formats in this file.
+ */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+const formatter = (options: Intl.DateTimeFormatOptions) => {
+  const key = JSON.stringify(options);
+  let cached = formatters.get(key);
+  if (!cached) {
+    // UTC, so the browser's own zone cannot shift a label off the date it was
+    // given — the same reason `at()` anchors at noon.
+    cached = new Intl.DateTimeFormat(undefined, { ...options, timeZone: "UTC" });
+    formatters.set(key, cached);
+  }
+  return cached;
+};
+
 const format = (iso: IsoDate, options: Intl.DateTimeFormatOptions) =>
-  new Intl.DateTimeFormat(undefined, { ...options, timeZone: "UTC" }).format(at(iso));
+  formatter(options).format(at(iso));
 
 /** "Friday 11 September" — the Day screen's heading. */
 export const formatDateLong = (iso: IsoDate) =>

@@ -12,7 +12,14 @@ import { after, describe, it } from "node:test";
 
 import { addDays, eachDay, endOfWeek, isoWeekday, startOfWeek, today } from "../src/lib/dates.js";
 import { withApi } from "./helpers/api.js";
-import { closePool, makeHabit, makeLog, makeSchedule, makeTask } from "./helpers/db.js";
+import {
+  closePool,
+  makeHabit,
+  makeLog,
+  makeProblem,
+  makeSchedule,
+  makeTask,
+} from "./helpers/db.js";
 
 after(closePool);
 
@@ -345,11 +352,30 @@ describe("GET /api/grid", () => {
 
   it("rejects an out-of-range or non-numeric width", async () => {
     await withApi(async ({ api }) => {
-      for (const weeks of ["0", "54", "abc", "-1", "1.5", ""]) {
+      // 261 weeks — five years — is the ceiling. Past it this is an export,
+      // and /api/export is the endpoint for that.
+      for (const weeks of ["0", "262", "abc", "-1", "1.5", ""]) {
         const response = await api(`/api/grid?weeks=${weeks}`);
         assert.equal(response.status, 400, `weeks=${JSON.stringify(weeks)}`);
       }
       assert.equal((await api("/api/grid?end=2026-02-31")).status, 400);
+    });
+  });
+
+  /*
+   * The long ranges the Pattern screen offers. They are cheap — a day is one
+   * character — and the reason the ceiling moved off a single year: reading the
+   * record across several of them is a thing this product is for.
+   */
+  it("serves a multi-year range, whole weeks all the way back", async () => {
+    await withApi(async ({ api }) => {
+      await makeHabit({ start_date: addDays(today(), -700) });
+
+      for (const weeks of [52, 104, 261]) {
+        const body = await getJson(api, `/api/grid?weeks=${weeks}`);
+        assert.equal(body.weeks, weeks, `weeks=${weeks}`);
+        assert.equal(body.habits[0].cells.length, weeks * 7, `weeks=${weeks}`);
+      }
     });
   });
 
@@ -559,20 +585,22 @@ describe("GET /api/export", () => {
       await makeLog(habit.id, { date: "2026-01-05", status: "done" });
       await makeTask({ title: "Archived task", archived_at: "2026-01-06T10:00:00Z" });
       await api("/api/journal/day/2026-01-05", { method: "PUT", body: { entry: "Hello." } });
+      await makeProblem({ title: "Archived problem", archived_at: "2026-01-06T10:00:00Z" });
 
       const response = await api("/api/export");
       assert.equal(response.status, 200);
       assert.match(response.headers.get("content-disposition"), /attachment; filename=/);
 
       const body = await response.json();
-      // 2 since the target moved to habit_schedules — see the export controller.
-      assert.equal(body.version, 2);
+      // 3 since leetcode_problems joined the document — see the export controller.
+      assert.equal(body.version, 3);
       assert.ok(body.exported_at);
       assert.equal(body.habits.length, 1);
       assert.equal(body.habit_schedules.length, 1);
       assert.equal(body.habit_logs.length, 1);
       assert.equal(body.journal.length, 1);
       assert.equal(body.tasks.length, 1, "an archived task is still part of the backup");
+      assert.equal(body.leetcode_problems.length, 1, "and so is an archived problem");
     });
   });
 
@@ -586,6 +614,31 @@ describe("GET /api/export", () => {
       assert.equal(body.habit_logs[0].status, "done");
       assert.equal(body.habit_logs[0].habit_id, habit.id);
       assert.equal(body.streaks, undefined, "nothing derived belongs in a backup");
+    });
+  });
+
+  /**
+   * The one thing in the database this file does not carry, and the omission is
+   * named rather than hidden. res.json() builds the whole document in memory, so
+   * a few hundred problem statements would be a backup that exhausts the heap;
+   * pg_dump is what carries the images, and README says so.
+   */
+  it("names a screenshot without inlining it", async () => {
+    await withApi(async ({ api }) => {
+      const problem = await makeProblem({ title: "LRU Cache" });
+      await api(`/api/leetcode/${problem.id}/screenshot`, {
+        method: "PUT",
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+          "base64",
+        ),
+        headers: { "content-type": "image/png" },
+      });
+
+      const [exported] = (await getJson(api, "/api/export")).leetcode_problems;
+      assert.equal(exported.screenshot_type, "image/png", "a restore can see what is missing");
+      assert.ok(exported.screenshot_bytes > 0, "and how big it was");
+      assert.ok(!("screenshot" in exported), "but never the bytes themselves");
     });
   });
 });
@@ -864,7 +917,7 @@ describe("quantity on /api/review/:month", () => {
 });
 
 describe("the export carries quantity in its new shape", () => {
-  it("is version 2, with the target on the schedule version", async () => {
+  it("puts the target on the schedule version", async () => {
     await withApi(async ({ api }) => {
       const habit = await makeHabit({
         name: "Run",
@@ -875,8 +928,6 @@ describe("the export carries quantity in its new shape", () => {
       await makeLog(habit.id, { date: "2026-01-05", status: "done", value: 3.5 });
 
       const body = await getJson(api, "/api/export");
-
-      assert.equal(body.version, 2, "the shape changed, so the version must say so");
 
       const exported = body.habits.find((row) => row.id === habit.id);
       assert.equal(exported.unit, "km");
