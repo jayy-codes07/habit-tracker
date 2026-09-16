@@ -17,11 +17,13 @@ import {
   startOfWeek,
   today as currentDate,
 } from "../../lib/dates.js";
+import { attainment } from "../../lib/attainment.js";
 import {
   dayVerdict,
   isScheduledOn,
   resolveResumeSchedule,
   resolveSchedule,
+  shapeSchedule,
   VERDICT,
   VERDICT_CHAR,
 } from "../../lib/scheduling.js";
@@ -40,13 +42,21 @@ import * as tasksService from "../tasks/tasks.service.js";
 // Loading
 // ---------------------------------------------------------------------------
 
-/** The shape lib/streaks.js works on. `through` is the last day `logs` covers. */
-const toView = (habit, versions, logs, through) => ({
+/**
+ * The shape lib/streaks.js works on. `through` is the last day `logs` covers.
+ *
+ * `values` is a sibling of `logs`, never a widening of it: lib/streaks.js reads
+ * Map<date, status> and must keep reading exactly that, so that quantity cannot
+ * reach a streak or a consistency rate even by accident. Only lib/attainment.js
+ * looks at `values`.
+ */
+const toView = (habit, versions, logs, values, through) => ({
   startDate: habit.start_date,
   archivedOn: habit.archived_on,
   through,
   versions: versions ?? [],
   logs: logs ?? new Map(),
+  values: values ?? new Map(),
 });
 
 const wasActiveBetween = (habit, from, to) =>
@@ -75,14 +85,23 @@ async function loadWindow(from, to) {
     habits[0].start_date,
   );
 
-  const [versions, logs] = await Promise.all([
+  const [versions, logs, values] = await Promise.all([
     habitsService.loadVersions(ids),
     habitsService.loadLogs(ids, earliest, to),
+    // Only the window asked for, not the whole history behind it: a streak needs
+    // everything before it to be correct, an average of measured sessions does
+    // not. See loadLogValues.
+    habitsService.loadLogValues(ids, from, to),
   ]);
 
   return {
     habits,
-    views: new Map(habits.map((h) => [h.id, toView(h, versions.get(h.id), logs.get(h.id), to)])),
+    views: new Map(
+      habits.map((h) => [
+        h.id,
+        toView(h, versions.get(h.id), logs.get(h.id), values.get(h.id), to),
+      ]),
+    ),
   };
 }
 
@@ -95,17 +114,6 @@ async function loadWindow(from, to) {
  * ended, which is what someone scrolling back is asking about.
  */
 const streakHorizon = (date, today) => (date < today ? addDays(date, 1) : today);
-
-/** The columns of a schedule version the client needs to redraw its picker. */
-const resumeShape = (schedule) =>
-  schedule
-    ? {
-        effective_from: schedule.effective_from,
-        schedule_kind: schedule.schedule_kind,
-        schedule_days: schedule.schedule_days,
-        weekly_target: schedule.weekly_target,
-      }
-    : null;
 
 // ---------------------------------------------------------------------------
 // The day screen
@@ -158,12 +166,29 @@ export async function buildDay(date) {
         // reports `bonus`, so a habit paused on a day it was ticked looked
         // active and offered no way back.
         paused,
-        // What "Resume" will restore. Null unless paused — see present() in
-        // habits.controller.js, which reports the same pair.
+        // What "Resume" will restore — its target included, which is the whole
+        // reason the target is versioned: a pause stores none, so without this
+        // the client would have to invent one. Null unless paused — see
+        // present() in habits.controller.js, which reports the same pair.
         resumes_to: paused
-          ? resumeShape(resolveResumeSchedule(view.versions, habit.start_date, date))
+          ? shapeSchedule(resolveResumeSchedule(view.versions, habit.start_date, date))
           : null,
+        /*
+         * The two halves of quantity, side by side and both nullable.
+         *
+         * `unit` is the habit's and is the only thing that says this habit is
+         * measured at all; `target_value` is this *day's*, resolved from the
+         * version in force on it, so a day lived under a 5 km target keeps
+         * saying 5 after the target becomes 10. A paused day has no target and
+         * a quantity habit may simply not have one, so null here means "nothing
+         * to aim at today", never "not a quantity habit".
+         */
+        unit: habit.unit,
+        target_value: schedule?.target_value ?? null,
         status: log?.status ?? null,
+        // What was actually measured. Null is a real answer on a done day:
+        // it means the habit was done and not measured.
+        value: log?.value ?? null,
         note: log?.note ?? null,
         verdict: dayVerdict({
           schedule,
@@ -299,12 +324,23 @@ export async function buildReview(month) {
     habits: habits.map((habit) => {
       const view = views.get(habit.id);
       const rate = consistency(view, { from: start, to, today });
+      /*
+       * Reported beside consistency, never folded into it. They answer two
+       * different questions and a habit can honestly score 100% on one and 60%
+       * on the other: showing up three times a week is the commitment, and five
+       * kilometres a time is the aspiration. Merging them would quietly turn
+       * `weekly × 3` into a weekly-volume habit.
+       */
+      const measured = attainment(view, { from: start, to });
 
       return {
         id: habit.id,
         name: habit.name,
         color_token: habit.color_token,
         schedule_kind: effectiveKind(view, today),
+        // Null for a binary habit, which is what makes the two rates below
+        // readable: no unit, nothing was ever being measured.
+        unit: habit.unit,
         /*
          * Reported raw, and compared against this month rather than against
          * today. A habit archived *after* the month shown was fully alive
@@ -316,6 +352,17 @@ export async function buildReview(month) {
         ...countVerdicts(view, habit, start, to, today),
         consistency: rate.rate,
         done_of: rate.opportunities,
+        /*
+         * How close the measured sessions came, 0..1, and how many there were.
+         *
+         * Both, always. A rate over two sessions and a rate over twenty are not
+         * the same claim, and a quantity habit logged mostly without values
+         * would otherwise read as a confident number resting on almost nothing.
+         * Null when nothing was measured — which is not the same as falling
+         * short, so it must never render as 0%.
+         */
+        attainment: measured.rate,
+        attainment_of: measured.sessions,
         current_streak: currentStreak(view, today),
         longest_streak: longestStreak(view, today),
       };

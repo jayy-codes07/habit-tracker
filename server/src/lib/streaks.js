@@ -287,6 +287,18 @@ function longestWeekly(habit, today) {
 // ---------------------------------------------------------------------------
 
 /**
+ * True when no day of the week is governed by a fixed version.
+ *
+ * Only consistency needs this. Both streak algorithms want a mixed week read as
+ * whatever its first day committed to, so that an edit never costs the run; the
+ * ratio cannot be that relaxed, because its two loops sum into one denominator.
+ */
+const isWhollyWeekly = (habit, weekStart) =>
+  eachDay(weekStart, addDays(weekStart, WEEK_LENGTH - 1)).every(
+    (date) => scheduleOn(habit, date)?.schedule_kind !== "fixed",
+  );
+
+/**
  * How much of what was asked actually happened, over a window.
  *
  * Separate from the streak on purpose: a streak answers "am I going right now",
@@ -327,6 +339,18 @@ export function consistency(habit, { from, to, today }) {
 
     const scored = scoreWeek(habit, week, today);
     if (!scored.scored || !scored.fullyLived || scored.target === null) continue;
+    /*
+     * ...and owning every day of it. The day loop above has already charged
+     * each fixed-governed day on its own, so a week that a weekly-to-fixed
+     * change split was billed twice over the same seven days: once as the
+     * weekly target, and again as the fixed days inside it. Five of seven for a
+     * week nothing ever asked seven of.
+     *
+     * setSchedule now defers a change of unit to the following Monday, so no
+     * such week can be written any more. This keeps the two loops disjoint for
+     * the ones already in the database, which no migration will revisit.
+     */
+    if (!isWhollyWeekly(habit, week)) continue;
 
     done += Math.min(scored.done, scored.target);
     opportunities += scored.target;

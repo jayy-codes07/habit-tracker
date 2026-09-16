@@ -17,6 +17,7 @@ import { describe, it } from "node:test";
 import {
   dayVerdict,
   isScheduledOn,
+  resolveNextSchedule,
   resolveResumeSchedule,
   resolveSchedule,
   VERDICT,
@@ -164,6 +165,74 @@ describe("resolveResumeSchedule", () => {
 
   it("is null before the habit started", () => {
     assert.equal(resolveResumeSchedule([fixed(START, [2, 4])], START, "2026-01-04"), null);
+  });
+});
+
+/**
+ * What is about to be asked, as opposed to what is being asked.
+ *
+ * A schedule change is not always immediate — a switch between fixed and weekly
+ * is stored effective the following Monday — and until this existed the only
+ * schedule a client ever saw was today's, so a version dated forward simply
+ * vanished on the next refetch and a save that had worked looked exactly like
+ * one that had failed.
+ */
+describe("resolveNextSchedule", () => {
+  it("is null when every version has already started", () => {
+    assert.equal(resolveNextSchedule(scheduleChange, "2026-02-10"), null);
+  });
+
+  it("is null for a habit with one version and no plans", () => {
+    assert.equal(resolveNextSchedule([fixed(START, [2, 4])], START), null);
+  });
+
+  it("reports a version dated later", () => {
+    const next = resolveNextSchedule(scheduleChange, "2026-01-26");
+
+    assert.equal(next.effective_from, CHANGED);
+    assert.equal(next.schedule_kind, "fixed");
+    assert.deepEqual(next.schedule_days, [2, 4]);
+    assert.equal(next.weekly_target, null);
+  });
+
+  /** The nearest one, not the furthest: versions are ascending, so the first. */
+  it("takes the earliest of several future versions", () => {
+    const versions = [fixed(START, [1, 3, 5]), weekly("2026-01-19", 4), paused(CHANGED)];
+
+    assert.equal(resolveNextSchedule(versions, START).effective_from, "2026-01-19");
+    assert.equal(resolveNextSchedule(versions, "2026-01-19").effective_from, CHANGED);
+  });
+
+  /*
+   * Strictly after. A version that starts today is in force today, and
+   * reporting it as upcoming would tell someone a change they can already see
+   * is still to come.
+   */
+  it("does not report a version that starts today", () => {
+    assert.equal(resolveNextSchedule(scheduleChange, CHANGED), null);
+    assert.equal(
+      resolveSchedule(scheduleChange, START, CHANGED).effective_from,
+      CHANGED,
+      "it is the current one instead",
+    );
+  });
+
+  /** It reports; it never decides. The day's own version is untouched by it. */
+  it("leaves the version in force alone", () => {
+    const on = "2026-01-26";
+
+    assert.deepEqual(resolveSchedule(scheduleChange, START, on).schedule_days, [1, 3, 5]);
+    assert.equal(resolveNextSchedule(scheduleChange, on).effective_from, CHANGED);
+    assert.equal(
+      dayVerdict({ schedule: resolveSchedule(scheduleChange, START, on), date: on, today: on }),
+      VERDICT.FUTURE,
+      "and a future version changes nothing about how a day reads",
+    );
+  });
+
+  /** A habit that has not begun: its first version is genuinely upcoming. */
+  it("reports the first version of a habit that has not started", () => {
+    assert.equal(resolveNextSchedule([fixed(START, [2, 4])], "2026-01-04").effective_from, START);
   });
 });
 

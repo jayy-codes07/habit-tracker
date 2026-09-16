@@ -71,21 +71,8 @@ const cases = [
     "habits_color_token_valid",
     () => makeHabit({ color_token: "chart-9" }),
   ],
-  [
-    "a zero target value",
-    "habits_target_value_positive",
-    () => insertHabitRaw({ target_value: 0 }),
-  ],
-  [
-    "a negative target value",
-    "habits_target_value_positive",
-    () => insertHabitRaw({ target_value: -5 }),
-  ],
-  [
-    "a unit with nothing to measure",
-    "habits_unit_requires_target",
-    () => insertHabitRaw({ unit: "pages" }),
-  ],
+  ["a blank unit", "habits_unit_valid", () => makeHabit({ unit: "   " })],
+  ["a unit over 20 characters", "habits_unit_valid", () => makeHabit({ unit: LONG(21) })],
 
   // --- habit_schedules ---
   [
@@ -142,6 +129,31 @@ const cases = [
     async () => {
       const habit = await makeHabit({ schedule: false });
       await makeSchedule(habit.id, { schedule_kind: "paused", weekly_target: 2 });
+    },
+  ],
+  // A pause asks for nothing, and an amount is something.
+  [
+    "a paused schedule that still asks for an amount",
+    "habit_schedules_shape",
+    async () => {
+      const habit = await makeHabit({ schedule: false, unit: "km" });
+      await makeSchedule(habit.id, { schedule_kind: "paused", target_value: 5 });
+    },
+  ],
+  [
+    "a zero target value",
+    "habit_schedules_target_value_positive",
+    async () => {
+      const habit = await makeHabit({ schedule: false, unit: "km" });
+      await makeSchedule(habit.id, { target_value: 0 });
+    },
+  ],
+  [
+    "a negative target value",
+    "habit_schedules_target_value_positive",
+    async () => {
+      const habit = await makeHabit({ schedule: false, unit: "km" });
+      await makeSchedule(habit.id, { target_value: -5 });
     },
   ],
   [
@@ -235,6 +247,16 @@ const cases = [
       await makeLog(habit.id, { value: -1 });
     },
   ],
+  // The one (status, value) pair with no reading: "I consider this done, and I
+  // did zero". missed + 0 and skipped + 0 stay legal — see the allowed cases.
+  [
+    "a done log that measured zero",
+    "habit_logs_done_value_not_zero",
+    async () => {
+      const habit = await makeHabit({ unit: "km" });
+      await makeLog(habit.id, { status: "done", value: 0 });
+    },
+  ],
   [
     "a note over 1000 characters",
     "habit_logs_note_length",
@@ -280,23 +302,11 @@ const cases = [
   ],
 ];
 
-/** Bypasses makeHabit for columns it does not expose. */
-async function insertHabitRaw(overrides) {
-  const row = {
-    name: "Raw habit",
-    color_token: "chart-1",
-    sort_order: 0,
-    start_date: DEFAULT_START_DATE,
-    target_value: null,
-    unit: null,
-    ...overrides,
-  };
-  await query(
-    `INSERT INTO habits (name, color_token, sort_order, start_date, target_value, unit)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [row.name, row.color_token, row.sort_order, row.start_date, row.target_value, row.unit],
-  );
-}
+// insertHabitRaw used to live here, to reach habits.target_value and habits.unit
+// which makeHabit did not expose. Both are reachable now: the target moved to
+// habit_schedules and makeSchedule takes it, and makeHabit takes the unit —
+// because the unit is what makes a habit quantity-based, so no fixture can
+// describe one without it.
 
 describe("schema invariants", () => {
   for (const [description, constraint, attempt] of cases) {
@@ -306,7 +316,7 @@ describe("schema invariants", () => {
   it("covers every case the product depends on", () => {
     // A tripwire, not a metric: if a constraint is added to the schema without a
     // case here, this number is the reminder.
-    assert.equal(cases.length, 35);
+    assert.equal(cases.length, 38);
   });
 });
 
@@ -325,6 +335,53 @@ describe("things the schema must allow", () => {
       assert.deepEqual(
         rows.map((r) => r.schedule_kind),
         ["fixed", "paused", "weekly"],
+      );
+    });
+  });
+
+  /*
+   * The positive half of the quantity model, and the half most likely to be
+   * over-constrained by accident. Every row here is legal, and each says
+   * something different:
+   *
+   *   a fixed version with no target   a quantity habit may measure without
+   *                                    aiming, so the target is optional on
+   *                                    every kind that can hold one at all
+   *   done with no value               done, not measured — a first-class
+   *                                    state, not an incomplete row
+   *   missed with a value              an honest partial attempt
+   *   skipped with a value             a rest day worked anyway
+   *   missed with zero                 "I tried and got nowhere", which is not
+   *                                    the contradiction done + 0 is
+   */
+  it("accepts a quantity schedule with no target", async () => {
+    await withRollback(async () => {
+      const habit = await makeHabit({ schedule: false, unit: "km" });
+      await makeSchedule(habit.id, { target_value: null });
+
+      const { rows } = await query("SELECT target_value FROM habit_schedules WHERE habit_id = $1", [
+        habit.id,
+      ]);
+      assert.equal(rows[0].target_value, null);
+    });
+  });
+
+  it("accepts every log value the model calls meaningful", async () => {
+    await withRollback(async () => {
+      const habit = await makeHabit({ unit: "km" });
+      await makeLog(habit.id, { date: "2026-01-05", status: "done", value: null });
+      await makeLog(habit.id, { date: "2026-01-06", status: "done", value: 3.5 });
+      await makeLog(habit.id, { date: "2026-01-07", status: "missed", value: 3 });
+      await makeLog(habit.id, { date: "2026-01-08", status: "skipped", value: 2 });
+      await makeLog(habit.id, { date: "2026-01-09", status: "missed", value: 0 });
+
+      const { rows } = await query(
+        "SELECT value::float8 AS value FROM habit_logs WHERE habit_id = $1 ORDER BY date",
+        [habit.id],
+      );
+      assert.deepEqual(
+        rows.map((r) => r.value),
+        [null, 3.5, 3, 2, 0],
       );
     });
   });

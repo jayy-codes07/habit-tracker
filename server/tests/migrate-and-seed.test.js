@@ -22,6 +22,7 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -33,6 +34,19 @@ import { databaseNameOf, resolveTestDatabaseUrl } from "./helpers/database-url.j
 
 const execFileAsync = promisify(execFile);
 const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * Read from the directory rather than listed here.
+ *
+ * What these tests are about is the runner — that it applies what is pending,
+ * records each file once, and does nothing on a second run. Naming the files
+ * would make every future migration fail this suite for no reason, which
+ * teaches whoever hits it to edit the assertion rather than read it. Migrations
+ * are immutable, so this list only ever grows.
+ */
+const MIGRATIONS = readdirSync(resolve(serverDir, "src/db/migrations"))
+  .filter((name) => name.endsWith(".sql"))
+  .sort();
 
 const testDatabaseUrl = resolveTestDatabaseUrl();
 const SCRATCH_NAME = `${databaseNameOf(testDatabaseUrl)}_scratch`;
@@ -131,7 +145,7 @@ describe("migration runner", () => {
     const { rows } = await onScratch("SELECT filename FROM schema_migrations ORDER BY filename");
     assert.deepEqual(
       rows.map((row) => row.filename),
-      ["001_init.sql"],
+      MIGRATIONS,
     );
   });
 
@@ -148,7 +162,7 @@ describe("migration runner", () => {
     await runScript(migrateScript);
 
     const { rows } = await onScratch("SELECT count(*)::int AS count FROM schema_migrations");
-    assert.equal(rows[0].count, 1);
+    assert.equal(rows[0].count, MIGRATIONS.length);
   });
 
   it("leaves the schema intact after repeated runs", async () => {

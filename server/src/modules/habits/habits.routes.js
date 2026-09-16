@@ -4,6 +4,7 @@ import {
   changeSchedule,
   clearLog,
   create,
+  history,
   list,
   remove,
   reorder,
@@ -21,6 +22,10 @@ export function createHabitsRouter() {
   // happen to differ today, but relying on that would break the first time
   // someone adds PUT /:id.
   router.put("/order", reorder);
+
+  // One habit's whole life. GET "/:id" does not exist, so there is nothing for
+  // this to be read as instead.
+  router.get("/:id/history", history);
 
   router.patch("/:id", update);
   router.delete("/:id", remove);

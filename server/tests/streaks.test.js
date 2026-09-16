@@ -357,6 +357,144 @@ describe("weekly streaks", () => {
 });
 
 /**
+ * Schedule boundaries inside a week.
+ *
+ * Two rules meet here and must not be confused with each other.
+ *
+ * A *target* change is scored by the week that is already running: the target in
+ * force on the week's first active day governs it, so the week stays normally
+ * scoreable and normally failable. Raising a target on Saturday cannot punish
+ * the week, and lowering one on Thursday cannot rescue it. That is deliberate —
+ * a week you have already half-lived is not renegotiable.
+ *
+ * A change of *unit* is prevented from landing mid-week at all: setSchedule
+ * defers fixed-to-weekly and weekly-to-fixed to the following Monday, so the
+ * fixtures below are shapes the API can no longer write. They are still tested,
+ * because rows written before that rule existed are still in the database and no
+ * migration will revisit them.
+ */
+describe("a schedule change inside a week", () => {
+  const THURSDAY = "2026-01-08";
+  const SUNDAY = "2026-01-11";
+  // The Monday after, so the week of MONDAY is the most recent finished one.
+  const AFTER = "2026-01-12";
+
+  const week = (h) => scoreWeek(h, MONDAY, AFTER);
+  const rate = (h) => consistency(h, { from: MONDAY, to: SUNDAY, today: AFTER });
+
+  describe("a weekly target raised mid-week", () => {
+    const h = habit({
+      versions: [weekly(MONDAY, 3), weekly(THURSDAY, 7)],
+      logs: run(MONDAY, 3, "done"),
+    });
+
+    it("scores the week under the target it began with", () => {
+      assert.equal(week(h).target, 3);
+      assert.equal(week(h).met, true, "3 of 3 was the deal on Monday");
+      assert.equal(week(h).fullyLived, true, "and the week is still a real week");
+    });
+
+    it("cannot punish a week that was already met", () => {
+      assert.equal(weeklyStreak(h, AFTER), 1);
+    });
+  });
+
+  describe("a weekly target lowered mid-week", () => {
+    const h = habit({
+      versions: [weekly(MONDAY, 7), weekly(THURSDAY, 1)],
+      logs: { [MONDAY]: "done" },
+    });
+
+    it("cannot rescue a week that was going to fall short", () => {
+      assert.equal(week(h).target, 7);
+      assert.equal(week(h).met, false, "1 of 7 is not met, whatever Thursday said");
+      assert.equal(weeklyStreak(h, AFTER), 0, "the week still fails");
+    });
+
+    it("charges the week its opening target in consistency", () => {
+      assert.deepEqual(rate(h), { done: 1, opportunities: 7, rate: 1 / 7 });
+    });
+  });
+
+  /**
+   * The whole point of scoring by version *contents* rather than by version
+   * identity: saving a schedule unchanged writes a row, and that row must be
+   * invisible to every reader. Under an identity test it would silently make the
+   * week provisional, and re-saving would become a way to never fail one.
+   */
+  it("is unmoved by a no-op save mid-week", () => {
+    const logs = { [MONDAY]: "done" };
+    const once = habit({ versions: [weekly(MONDAY, 3)], logs });
+    const twice = habit({ versions: [weekly(MONDAY, 3), weekly(THURSDAY, 3)], logs });
+
+    assert.deepEqual(week(twice), week(once));
+    assert.deepEqual(rate(twice), rate(once));
+    assert.equal(weeklyStreak(twice, AFTER), weeklyStreak(once, AFTER));
+  });
+
+  /** A fixed schedule's period is the day, so a boundary inside a week is fine. */
+  describe("fixed to fixed, which stays immediate", () => {
+    const versions = [fixed(MONDAY, [1, 3, 5]), fixed(THURSDAY, [1, 2, 3])];
+
+    it("scores every day under the version in force on it", () => {
+      const h = habit({ versions, logs: { [MONDAY]: "done", "2026-01-07": "done" } });
+      // Friday was Mon/Wed/Fri's day, but by Friday the schedule was Mon/Tue/Wed.
+      assert.deepEqual(rate(h), { done: 2, opportunities: 2, rate: 1 });
+      assert.equal(fixedStreak(h, AFTER), 2);
+    });
+
+    it("still fails a scheduled day that was never logged", () => {
+      const h = habit({ versions, logs: { [MONDAY]: "done" } }); // Wednesday missing
+      assert.deepEqual(rate(h), { done: 1, opportunities: 2, rate: 0.5 });
+      assert.equal(fixedStreak(h, AFTER), 0);
+    });
+  });
+
+  /**
+   * The bug the disjointness guard exists for. Mon-Wed done under weekly 3,
+   * nothing Thu-Sun under the fixed version that replaced it: the week used to
+   * be charged both ways at once — four of seven — for a week nothing ever asked
+   * seven of, with Friday counted in both halves.
+   */
+  describe("weekly to fixed, which consistency must not charge twice", () => {
+    const versions = [weekly(MONDAY, 3), fixed(THURSDAY)];
+
+    it("counts the fixed days only", () => {
+      const h = habit({
+        versions,
+        logs: { [MONDAY]: "done", "2026-01-07": "done", "2026-01-09": "done" },
+      });
+      // Friday done; Thursday, Saturday and Sunday never logged.
+      assert.deepEqual(rate(h), { done: 1, opportunities: 4, rate: 0.25 });
+    });
+
+    it("leaves the streak reading the week as the weekly week it began as", () => {
+      const h = habit({ versions, logs: run(MONDAY, 3, "done") });
+      assert.equal(week(h).target, 3);
+      assert.equal(week(h).met, true, "an edit must never cost a run");
+    });
+  });
+
+  /** The mirror image, which never double-counted: the week is not a weekly unit. */
+  it("counts only the fixed days when fixed becomes weekly", () => {
+    const h = habit({
+      versions: [fixed(MONDAY, [1, 3, 5]), weekly(THURSDAY, 3)],
+      logs: { [MONDAY]: "done", "2026-01-07": "done", "2026-01-09": "done" },
+    });
+
+    assert.equal(week(h).target, null, "the week is not a weekly unit");
+    // Monday and Wednesday. Friday was owed by a version that no longer governs it.
+    assert.deepEqual(rate(h), { done: 2, opportunities: 2, rate: 1 });
+  });
+
+  /** The guard must not reach a week that really is weekly all the way through. */
+  it("still charges a week no fixed version touches", () => {
+    const h = habit({ versions: [weekly(MONDAY, 3)], logs: run(MONDAY, 2, "done") });
+    assert.deepEqual(rate(h), { done: 2, opportunities: 3, rate: 2 / 3 });
+  });
+});
+
+/**
  * Case E. Scoring stops being expressed in the old unit, but the streak itself
  * survives: losing six months of history as a side effect of editing a schedule
  * is the worst thing this app could do.

@@ -84,6 +84,52 @@ export function resolveResumeSchedule(versions, startDate, date) {
 }
 
 /**
+ * The earliest version that has not started yet, or null.
+ *
+ * The mirror of resolveSchedule: that one answers what is being asked of you
+ * now, this one what is about to be. It exists because a schedule change is not
+ * always immediate — a switch between fixed and weekly is stored effective the
+ * following Monday, see setSchedule — and a version dated forward is otherwise
+ * invisible to a client that only ever receives the schedule resolved as of
+ * today. A save that had worked perfectly then looked exactly like one that had
+ * failed.
+ *
+ * `versions` must be ascending, so the first match is the nearest one. There is
+ * no start_date argument and no need for one: no version can predate the
+ * habit's own start, and the first version of a habit that has not begun yet is
+ * genuinely upcoming.
+ */
+export function resolveNextSchedule(versions, date) {
+  return versions.find((version) => version.effective_from > date) ?? null;
+}
+
+/**
+ * The columns of a schedule version a client needs to redraw its picker.
+ *
+ * One copy, deliberately. This projection is returned by three different things
+ * — `schedule`, `resumes_to` and `next_schedule` on /habits, and `resumes_to` on
+ * /day — and it existed as two byte-identical private functions in two modules
+ * until `target_value` had to be added to it. A field added to one copy and not
+ * the other makes the two endpoints disagree about the same version, which is
+ * exactly the class of bug `resumes_to` was introduced to fix.
+ *
+ * It lives beside the three resolvers because they are what produce the rows it
+ * shapes, and it is as pure as they are.
+ */
+export function shapeSchedule(schedule) {
+  if (!schedule) return null;
+
+  return {
+    effective_from: schedule.effective_from,
+    schedule_kind: schedule.schedule_kind,
+    schedule_days: schedule.schedule_days,
+    weekly_target: schedule.weekly_target,
+    // Null both when nothing is being measured and when the version is paused.
+    target_value: schedule.target_value ?? null,
+  };
+}
+
+/**
  * Whether the habit was meant to be done on this specific day.
  *
  * Only a fixed schedule names days. A weekly schedule sets a count and leaves

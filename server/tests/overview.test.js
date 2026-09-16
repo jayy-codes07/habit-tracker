@@ -565,7 +565,8 @@ describe("GET /api/export", () => {
       assert.match(response.headers.get("content-disposition"), /attachment; filename=/);
 
       const body = await response.json();
-      assert.equal(body.version, 1);
+      // 2 since the target moved to habit_schedules — see the export controller.
+      assert.equal(body.version, 2);
       assert.ok(body.exported_at);
       assert.equal(body.habits.length, 1);
       assert.equal(body.habit_schedules.length, 1);
@@ -635,6 +636,257 @@ describe("the auth boundary", () => {
       ]) {
         assert.equal((await request(path)).status, 401, path);
       }
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Quantity, across the read models
+// ---------------------------------------------------------------------------
+
+/**
+ * The two halves of quantity, side by side and never merged.
+ *
+ * Occurrence consistency answers "did I show up as often as I said I would" and
+ * is binding: it drives `met` and both streaks. Attainment answers "when I
+ * showed up, how close did I get" and is descriptive: it drives nothing. A
+ * habit can honestly score 100% on one and 60% on the other, and the point of
+ * these tests is that neither number can move the other.
+ */
+describe("quantity on /api/day", () => {
+  it("carries the unit, the day's target and the measured value", async () => {
+    await withApi(async ({ api }) => {
+      const date = today();
+      const habit = await makeHabit({
+        name: "Run",
+        unit: "km",
+        start_date: addDays(date, -10),
+        schedule: { target_value: 5 },
+      });
+      await makeLog(habit.id, { date, status: "done", value: 3 });
+
+      const body = await getJson(api, `/api/day/${date}`);
+      const row = body.habits[0];
+
+      assert.equal(row.unit, "km");
+      assert.equal(row.target_value, 5);
+      assert.equal(row.value, 3);
+      // Quantity never touches the claim or what the day amounted to.
+      assert.equal(row.status, "done");
+      assert.equal(row.verdict, "done");
+    });
+  });
+
+  it("reports the target in force on the day being read, not today's", async () => {
+    await withApi(async ({ api }) => {
+      const date = today();
+      const start = addDays(date, -20);
+      const habit = await makeHabit({
+        name: "Run",
+        unit: "km",
+        start_date: start,
+        schedule: { target_value: 5 },
+      });
+      await makeSchedule(habit.id, {
+        effective_from: addDays(date, -5),
+        schedule_days: EVERY_DAY,
+        target_value: 10,
+      });
+
+      const then = await getJson(api, `/api/day/${addDays(date, -10)}`);
+      const now = await getJson(api, `/api/day/${date}`);
+
+      assert.equal(
+        then.habits[0].target_value,
+        5,
+        "a past day keeps the target it was lived under",
+      );
+      assert.equal(now.habits[0].target_value, 10);
+    });
+  });
+
+  it("reports nulls for a binary habit", async () => {
+    await withApi(async ({ api }) => {
+      const date = today();
+      const habit = await makeHabit({ name: "Read", start_date: addDays(date, -10) });
+      await makeLog(habit.id, { date, status: "done" });
+
+      const body = await getJson(api, `/api/day/${date}`);
+      const row = body.habits[0];
+
+      assert.equal(row.unit, null);
+      assert.equal(row.target_value, null);
+      assert.equal(row.value, null);
+    });
+  });
+
+  it("reports no target while paused, and the one it will resume to", async () => {
+    await withApi(async ({ api }) => {
+      const date = today();
+      const habit = await makeHabit({
+        name: "Run",
+        unit: "km",
+        start_date: addDays(date, -20),
+        schedule: { target_value: 5 },
+      });
+      await makeSchedule(habit.id, {
+        effective_from: addDays(date, -3),
+        schedule_kind: "paused",
+        schedule_days: null,
+      });
+
+      const body = await getJson(api, `/api/day/${date}`);
+      const row = body.habits[0];
+
+      assert.equal(row.paused, true);
+      assert.equal(row.target_value, null, "a pause asks for nothing");
+      assert.equal(row.resumes_to.target_value, 5);
+    });
+  });
+});
+
+describe("quantity on /api/review/:month", () => {
+  /*
+   * A fixed month in the past, and habits archived after their last logged day.
+   *
+   * The month has to be wholly behind us or the review's window stops at today
+   * and the assertions move with the calendar. The archiving is what bounds the
+   * other end: without it every remaining day of March is a scheduled day with
+   * no row, so consistency would measure the empty rest of the month rather
+   * than the days the test is about.
+   */
+  const MONTH = "2026-03";
+  const DAY_ONE = "2026-03-02";
+  const endOn = (date) => `${date}T12:00:00Z`;
+
+  const measuredHabit = (overrides = {}) =>
+    makeHabit({
+      name: "Run",
+      unit: "km",
+      start_date: DAY_ONE,
+      schedule: { effective_from: DAY_ONE, target_value: 5 },
+      ...overrides,
+    });
+
+  it("reports attainment beside consistency, and does not fold one into the other", async () => {
+    await withApi(async ({ api }) => {
+      const habit = await measuredHabit({ archived_at: endOn(addDays(DAY_ONE, 2)) });
+
+      // Three days, all done, every one short. Showing up without reaching the
+      // target: occurrence consistency full, attainment 60%. Both true at once,
+      // which is the entire reason they are two numbers.
+      for (let index = 0; index < 3; index += 1) {
+        await makeLog(habit.id, { date: addDays(DAY_ONE, index), status: "done", value: 3 });
+      }
+
+      const row = (await getJson(api, `/api/review/${MONTH}`)).habits[0];
+
+      assert.equal(row.unit, "km");
+      assert.equal(row.consistency, 1, "every scheduled day was done");
+      assert.ok(Math.abs(row.attainment - 0.6) < 1e-9, `attainment was ${row.attainment}`);
+      assert.equal(row.attainment_of, 3);
+    });
+  });
+
+  it("counts only measured done days in the denominator", async () => {
+    await withApi(async ({ api }) => {
+      const habit = await measuredHabit({ archived_at: endOn(addDays(DAY_ONE, 3)) });
+
+      await makeLog(habit.id, { date: DAY_ONE, status: "done", value: 5 });
+      // Done but not measured: a full occurrence, and not a sample.
+      await makeLog(habit.id, { date: addDays(DAY_ONE, 1), status: "done" });
+      // Measured, but the claim is a miss: a record, never a score.
+      await makeLog(habit.id, { date: addDays(DAY_ONE, 2), status: "missed", value: 4 });
+      // A rest day worked anyway: out of both.
+      await makeLog(habit.id, { date: addDays(DAY_ONE, 3), status: "skipped", value: 5 });
+
+      const row = (await getJson(api, `/api/review/${MONTH}`)).habits[0];
+
+      assert.equal(row.attainment_of, 1, "only the one measured done day is a sample");
+      assert.equal(row.attainment, 1);
+    });
+  });
+
+  it("reports null attainment for a binary habit", async () => {
+    await withApi(async ({ api }) => {
+      const habit = await makeHabit({
+        name: "Read",
+        start_date: DAY_ONE,
+        archived_at: endOn(DAY_ONE),
+      });
+      await makeLog(habit.id, { date: DAY_ONE, status: "done" });
+
+      const row = (await getJson(api, `/api/review/${MONTH}`)).habits[0];
+
+      assert.equal(row.unit, null);
+      // Null, not zero: nothing was ever being measured, which is not the same
+      // as measuring and falling short.
+      assert.equal(row.attainment, null);
+      assert.equal(row.attainment_of, 0);
+    });
+  });
+
+  /*
+   * The architectural claim, checked end to end rather than only in the pure
+   * tests: values reach lib/attainment.js and nothing else, so a quantity habit
+   * that fell short every single day scores exactly as a binary one that did the
+   * same days.
+   */
+  it("gives a quantity habit and a binary habit the same streak and consistency", async () => {
+    await withApi(async ({ api }) => {
+      const archived = endOn(addDays(DAY_ONE, 2));
+      const measured = await measuredHabit({ sort_order: 1, archived_at: archived });
+      const binary = await makeHabit({
+        name: "Read",
+        sort_order: 2,
+        start_date: DAY_ONE,
+        archived_at: archived,
+      });
+
+      for (let index = 0; index < 3; index += 1) {
+        const date = addDays(DAY_ONE, index);
+        await makeLog(measured.id, { date, status: "done", value: 1 });
+        await makeLog(binary.id, { date, status: "done" });
+      }
+
+      const body = await getJson(api, `/api/review/${MONTH}`);
+      const [a, b] = body.habits;
+
+      assert.equal(a.consistency, b.consistency);
+      assert.equal(a.current_streak, b.current_streak);
+      assert.equal(a.longest_streak, b.longest_streak);
+
+      // ...while attainment sees exactly what the streaks cannot.
+      assert.ok(Math.abs(a.attainment - 0.2) < 1e-9, `attainment was ${a.attainment}`);
+      assert.equal(b.attainment, null);
+    });
+  });
+});
+
+describe("the export carries quantity in its new shape", () => {
+  it("is version 2, with the target on the schedule version", async () => {
+    await withApi(async ({ api }) => {
+      const habit = await makeHabit({
+        name: "Run",
+        unit: "km",
+        start_date: "2026-01-05",
+        schedule: { effective_from: "2026-01-05", target_value: 5 },
+      });
+      await makeLog(habit.id, { date: "2026-01-05", status: "done", value: 3.5 });
+
+      const body = await getJson(api, "/api/export");
+
+      assert.equal(body.version, 2, "the shape changed, so the version must say so");
+
+      const exported = body.habits.find((row) => row.id === habit.id);
+      assert.equal(exported.unit, "km");
+      assert.ok(!("target_value" in exported), "the target no longer belongs to the habit");
+
+      const version = body.habit_schedules.find((row) => row.habit_id === habit.id);
+      assert.equal(version.target_value, 5);
+
+      const log = body.habit_logs.find((row) => row.habit_id === habit.id);
+      assert.equal(log.value, 3.5);
     });
   });
 });

@@ -149,14 +149,17 @@ export async function makeHabit({ schedule = {}, ...overrides } = {}) {
     sort_order: 0,
     start_date: DEFAULT_START_DATE,
     archived_at: null,
+    // NULL is a binary habit, which is the default because most are. Pass a unit
+    // to make the habit a quantity one — that is the only thing that does.
+    unit: null,
     ...overrides,
   };
 
   const { rows } = await query(
-    `INSERT INTO habits (name, color_token, sort_order, start_date, archived_at)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO habits (name, color_token, sort_order, start_date, archived_at, unit)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
-    [row.name, row.color_token, row.sort_order, row.start_date, row.archived_at],
+    [row.name, row.color_token, row.sort_order, row.start_date, row.archived_at, row.unit],
   );
   const habit = rows[0];
 
@@ -174,15 +177,25 @@ export async function makeSchedule(habitId, overrides = {}) {
     schedule_kind: kind,
     schedule_days: kind === "fixed" ? EVERY_DAY : null,
     weekly_target: kind === "weekly" ? 3 : null,
+    // Not derived from the kind: a target is optional on every kind that can
+    // hold one, and defaulting one on would make every fixture a quantity one.
+    target_value: null,
     ...overrides,
   };
 
   const { rows } = await query(
     `INSERT INTO habit_schedules
-       (habit_id, effective_from, schedule_kind, schedule_days, weekly_target)
-     VALUES ($1, $2, $3, $4, $5)
+       (habit_id, effective_from, schedule_kind, schedule_days, weekly_target, target_value)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
-    [habitId, row.effective_from, row.schedule_kind, row.schedule_days, row.weekly_target],
+    [
+      habitId,
+      row.effective_from,
+      row.schedule_kind,
+      row.schedule_days,
+      row.weekly_target,
+      row.target_value,
+    ],
   );
   return rows[0];
 }

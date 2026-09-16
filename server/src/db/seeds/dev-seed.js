@@ -53,6 +53,7 @@ const EVERY_DAY = [1, 2, 3, 4, 5, 6, 7];
 const RUN_SCHEDULE_CHANGE = startOfWeek(addDays(TODAY, -42)); // Mon/Wed/Fri -> Tue/Thu
 const READ_PAUSE_FROM = addDays(TODAY, -20); // a week away from the books
 const READ_PAUSE_UNTIL = addDays(TODAY, -13); // reading resumes on this day
+const WATER_TARGET_CHANGE = startOfWeek(addDays(TODAY, -28)); // 6 glasses -> 8
 
 // ---------------------------------------------------------------------------
 // Habits.
@@ -125,6 +126,22 @@ const habits = [
     schedules: [{ effective_from: HISTORY_START, kind: "fixed", days: [1, 2, 3, 4, 5] }],
     archived_days_ago: 10, // given up on, kept for history
   },
+  {
+    key: "water",
+    name: "Drink water",
+    color_token: "chart-2",
+    sort_order: 7,
+    // The quantity fixture. A unit is the only thing that makes a habit
+    // measured, and the target is raised mid-history so the grid holds days
+    // lived under both — the case that would silently re-score itself if the
+    // target had stayed on the habit row rather than the schedule version.
+    unit: "glasses",
+    start_date: HISTORY_START,
+    schedules: [
+      { effective_from: HISTORY_START, kind: "fixed", days: EVERY_DAY, targetValue: 6 },
+      { effective_from: WATER_TARGET_CHANGE, kind: "fixed", days: EVERY_DAY, targetValue: 8 },
+    ],
+  },
 ];
 
 // Resolved once, before any generator runs, because the generators need to know
@@ -175,7 +192,7 @@ function scheduledDates(habit) {
  */
 function fixedLogs(
   habit,
-  { noRowIndexes = [], missedIndexes = [], skippedIndexes = [], notes = {} },
+  { noRowIndexes = [], missedIndexes = [], skippedIndexes = [], notes = {}, valueFor = null },
 ) {
   const noRow = new Set(noRowIndexes);
   const missed = new Set(missedIndexes);
@@ -189,7 +206,14 @@ function fixedLogs(
       const back = lastIndex - i; // 0 = most recent scheduled day
       if (noRow.has(back)) return null; // no row at all
       const status = missed.has(back) ? "missed" : skipped.has(back) ? "skipped" : "done";
-      return { date: day, status, note: notes[back] ?? null };
+      return {
+        date: day,
+        status,
+        // Binary habits pass no generator and every row keeps a NULL value,
+        // which is what a binary habit is.
+        value: valueFor?.({ back, status, date: day }) ?? null,
+        note: notes[back] ?? null,
+      };
     })
     .filter(Boolean);
 }
@@ -210,7 +234,7 @@ function weeklyLogs(habit, { candidates, countForWeek }) {
 
     const target = countForWeek({ index, isCurrentWeek });
     for (const day of available.slice(0, target)) {
-      rows.push({ date: day, status: "done", note: null });
+      rows.push({ date: day, status: "done", value: null, note: null });
     }
   }
   return rows;
@@ -266,6 +290,36 @@ const logPlans = {
 
   // Abandoned before it was archived: the last four scheduled days have no rows.
   cold: (h) => fixedLogs(h, { noRowIndexes: [0, 1, 2, 3] }),
+
+  /*
+   * The quantity fixture, and every state a measured log can be in:
+   *
+   *   done with a value over the target     capped at 1, never more
+   *   done with a value under it            a partial session, scored as one
+   *   done with no value at all             a real state: done, not measured.
+   *                                         Full occurrence, no sample — it
+   *                                         must not read as zero and must not
+   *                                         pad the denominator either.
+   *   missed with a value                   an honest partial; record only
+   *   missed with no value                  an ordinary miss
+   *   skipped with a value                  a rest day worked anyway; out of
+   *                                         the denominator all the same
+   *
+   * No row ever pairs done with 0 — that is the one combination the database
+   * refuses, because it has no reading.
+   */
+  water: (h) =>
+    fixedLogs(h, {
+      missedIndexes: [5, 19],
+      skippedIndexes: [11],
+      notes: { 0: "Easier since the bottle lives on the desk." },
+      valueFor: ({ back, status }) => {
+        if (status === "missed") return back === 5 ? 3 : null;
+        if (status === "skipped") return 2;
+        if (back % 7 === 3) return null; // done, never measured
+        return [8, 6, 5, 8, 7, 4, 9][back % 7];
+      },
+    }),
 };
 
 // ---------------------------------------------------------------------------
@@ -338,11 +392,12 @@ async function seed() {
 
     const statusCounts = { done: 0, missed: 0, skipped: 0 };
     let scheduleCount = 0;
+    let measuredCount = 0;
 
     for (const habit of habits) {
       const { rows } = await client.query(
-        `INSERT INTO habits (name, color_token, sort_order, start_date, archived_at)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO habits (name, color_token, sort_order, start_date, archived_at, unit)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id`,
         [
           habit.name,
@@ -350,6 +405,7 @@ async function seed() {
           habit.sort_order,
           habit.start_date,
           habit.archived_on ? instantOn(habit.archived_on) : null,
+          habit.unit ?? null,
         ],
       );
       habit.id = rows[0].id;
@@ -357,14 +413,15 @@ async function seed() {
       for (const version of habit.schedules) {
         await client.query(
           `INSERT INTO habit_schedules
-             (habit_id, effective_from, schedule_kind, schedule_days, weekly_target)
-           VALUES ($1, $2, $3, $4, $5)`,
+             (habit_id, effective_from, schedule_kind, schedule_days, weekly_target, target_value)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
           [
             habit.id,
             version.effective_from,
             version.kind,
             version.days ?? null,
             version.weeklyTarget ?? null,
+            version.targetValue ?? null,
           ],
         );
         scheduleCount += 1;
@@ -372,10 +429,11 @@ async function seed() {
 
       for (const log of logPlans[habit.key](habit)) {
         await client.query(
-          "INSERT INTO habit_logs (habit_id, date, status, note) VALUES ($1, $2, $3, $4)",
-          [habit.id, log.date, log.status, log.note],
+          "INSERT INTO habit_logs (habit_id, date, status, value, note) VALUES ($1, $2, $3, $4, $5)",
+          [habit.id, log.date, log.status, log.value ?? null, log.note],
         );
         statusCounts[log.status] += 1;
+        if (log.value !== null && log.value !== undefined) measuredCount += 1;
       }
     }
 
@@ -409,7 +467,7 @@ async function seed() {
       ]);
     }
 
-    return { statusCounts, scheduleCount };
+    return { statusCounts, scheduleCount, measuredCount };
   });
 
   const { done, missed, skipped } = counts.statusCounts;
@@ -419,12 +477,14 @@ async function seed() {
   console.log(`[seed] schedules   ${counts.scheduleCount}`);
   console.log(`[seed] habit_logs  ${done + missed + skipped}`);
   console.log(`[seed]             done ${done} / missed ${missed} / skipped ${skipped}`);
+  console.log(`[seed]             ${counts.measuredCount} carrying a measured value`);
   console.log(`[seed] tasks       ${tasks.length}`);
   console.log(
     `[seed] journal     ${Object.keys(dayEntries).length} day + ${monthEntries.length} month`,
   );
   console.log(`[seed] run schedule change  ${RUN_SCHEDULE_CHANGE}`);
   console.log(`[seed] read paused          ${READ_PAUSE_FROM} -> ${addDays(READ_PAUSE_UNTIL, -1)}`);
+  console.log(`[seed] water target change  ${WATER_TARGET_CHANGE} (6 -> 8 glasses)`);
 }
 
 /**
@@ -440,6 +500,10 @@ async function seed() {
  *   stretch   starts mid-history; current streak 3 done days, spanning a
  *             'skipped' day that preserves the streak without incrementing it
  *   cold      archived, with no rows for its final scheduled days
+ *   water     the quantity habit: unit 'glasses', target raised 6 -> 8 partway
+ *             through, and logs covering every measured state there is —
+ *             over target, under it, done with no value at all, missed with a
+ *             value, missed without one, and skipped with one
  */
 
 try {
