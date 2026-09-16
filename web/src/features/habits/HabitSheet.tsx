@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import { AmountField } from "./AmountField";
 import { Choice } from "../../components/Choice";
 import { Dialog } from "../../components/Dialog";
 import { FIELD, PRIMARY, QUIET } from "../../components/form";
@@ -38,6 +39,13 @@ export function HabitSheet({
 }) {
   const [mode, setMode] = useState<"actions" | "resume">("actions");
   const [note, setNote] = useState(habit.note ?? "");
+  /*
+   * Held here as well as on the server so that choosing a status carries the
+   * number the person has already typed. PUT replaces the whole log row, so a
+   * status written without it would clear a measurement entered a second
+   * earlier — the same trap the note already avoids.
+   */
+  const [value, setValue] = useState(habit.value);
   // The version the pause interrupted, from the server. The old guess read the
   // target off `week`, which a paused week never scores, so every weekly habit
   // resumed at three a week whatever it had been.
@@ -45,6 +53,29 @@ export function HabitSheet({
 
   const setLog = useSetLog(date);
   const schedule = useSetSchedule();
+
+  /*
+   * The note saves on blur, and closing the sheet is not a blur.
+   *
+   * Escape and a tap on the backdrop fire the dialog's own close, which
+   * unmounts this component — so a note typed and then dismissed was written,
+   * looked saved, and was gone. Every exit now goes through close(), and the
+   * ref is what stops the blur that a tap on the X button fires first from
+   * writing the same sentence twice.
+   */
+  const written = useRef(habit.note ?? "");
+
+  const saveNote = () => {
+    const next = note.trim();
+    if (!habit.status || next === written.current) return;
+    written.current = next;
+    setLog.mutate({ habit, status: habit.status, note: next || null, value });
+  };
+
+  const close = () => {
+    saveNote();
+    onClose();
+  };
 
   // Not `verdict === "paused"`: a paused day that was worked reports "bonus",
   // so that test lost the pause exactly when the habit had been ticked — the
@@ -54,12 +85,12 @@ export function HabitSheet({
 
   if (mode === "resume") {
     return (
-      <Dialog open onClose={onClose} title={`Resume ${habit.name}`}>
+      <Dialog open onClose={close} title={`Resume ${habit.name}`}>
         <div className="grid gap-5">
           <p className="text-muted -mt-2">
             This takes effect today. Past weeks keep the schedule they were lived under.
           </p>
-          <SchedulePicker draft={draft} onChange={setDraft} />
+          <SchedulePicker draft={draft} unit={habit.unit} onChange={setDraft} />
           {error && (
             <p role="alert" className="text-warn text-meta">
               {(error as Error).message}
@@ -73,7 +104,7 @@ export function HabitSheet({
               onClick={() =>
                 schedule.mutate(
                   { id: habit.id, schedule: toScheduleInput(draft) },
-                  { onSuccess: onClose },
+                  { onSuccess: close },
                 )
               }
             >
@@ -91,12 +122,12 @@ export function HabitSheet({
   const meta = metaLine(habit);
 
   return (
-    <Dialog open onClose={onClose} title={habit.name}>
+    <Dialog open onClose={close} title={habit.name}>
       <div className="grid gap-5">
         {meta && <p className="text-muted -mt-2">{meta}</p>}
 
         <fieldset disabled={readOnly}>
-          <legend className="text-meta text-muted pb-1.5">
+          <legend className="label text-muted pb-2.5">
             {readOnly ? "This day has not happened yet" : "How did it go?"}
           </legend>
           <div className="grid grid-cols-4 gap-2">
@@ -106,9 +137,22 @@ export function HabitSheet({
                 type="radio"
                 name="log-status"
                 checked={habit.status === status}
-                onChange={() => setLog.mutate({ habit, status, note: note.trim() || null })}
+                onChange={() => {
+                  // Recorded as written, so close() does not send the same
+                  // sentence a second time on the way out.
+                  written.current = note.trim();
+                  setLog.mutate({
+                    habit,
+                    status,
+                    note: note.trim() || null,
+                    // Done cannot measure zero, so a zero already in the box is
+                    // dropped rather than rejected: the person asked for the
+                    // day to be done, and an unmeasured done day is valid.
+                    value: status === "done" && value === 0 ? null : value,
+                  });
+                }}
                 label={label}
-                className="text-meta px-0"
+                className=""
               >
                 {label}
               </Choice>
@@ -118,17 +162,63 @@ export function HabitSheet({
               disabled={habit.status === null || readOnly}
               onClick={() => {
                 setNote("");
+                written.current = "";
+                setValue(null);
                 setLog.mutate({ habit, status: null });
               }}
-              className="border-line-strong hover:bg-raised text-meta text-muted hover:text-ink min-h-11 rounded-lg border disabled:opacity-40"
+              className="label text-muted hover:text-ink min-h-11 underline decoration-[var(--c-baseline)] underline-offset-[6px] disabled:opacity-40"
             >
               Clear
             </button>
           </div>
         </fieldset>
 
+        {/*
+         * Measured habits only — `unit` is the whole marker, so a binary habit
+         * never sees a box for a number it has nowhere to put. Keyed on the
+         * habit and its stored value so that a correction arriving from the
+         * server restarts the field rather than fighting what is in it.
+         */}
+        {habit.unit && (
+          <AmountField
+            key={`${habit.id}-${habit.value ?? ""}`}
+            id="log-value"
+            label="How much"
+            unit={habit.unit}
+            value={value}
+            disabled={habit.status === null || readOnly}
+            // Zero is a real measurement on a day you missed or skipped, and a
+            // contradiction on one you call done.
+            allowZero={habit.status !== "done"}
+            placeholder={
+              habit.status === null
+                ? "Mark the day first."
+                : habit.target_value !== null
+                  ? String(habit.target_value)
+                  : "Not measured"
+            }
+            hint={
+              habit.target_value === null
+                ? "No target set. This is recorded as it is."
+                : `Target ${habit.target_value} ${habit.unit}. Falling short never breaks a streak.`
+            }
+            onCommit={(next) => {
+              setValue(next);
+              if (habit.status) {
+                written.current = note.trim();
+                setLog.mutate({
+                  habit,
+                  status: habit.status,
+                  note: note.trim() || null,
+                  value: next,
+                });
+              }
+            }}
+          />
+        )}
+
         <div>
-          <label htmlFor="log-note" className="text-meta text-muted block pb-1.5">
+          <label htmlFor="log-note" className="label text-muted block pb-2.5">
             Note
           </label>
           <textarea
@@ -141,11 +231,7 @@ export function HabitSheet({
               habit.status === null ? "Mark the day first to add a note." : "How did it go?"
             }
             onChange={(event) => setNote(event.target.value)}
-            onBlur={() => {
-              if (habit.status && note.trim() !== (habit.note ?? "")) {
-                setLog.mutate({ habit, status: habit.status, note: note.trim() || null });
-              }
-            }}
+            onBlur={saveNote}
             className={`${FIELD} min-h-24 resize-y py-2.5 font-serif disabled:opacity-50`}
           />
         </div>
@@ -156,7 +242,7 @@ export function HabitSheet({
           </p>
         )}
 
-        <div className="border-line grid gap-2 border-t pt-4">
+        <div className="border-grid grid gap-2 border-t pt-4">
           {paused ? (
             <>
               <button type="button" className={QUIET} onClick={() => setMode("resume")}>
@@ -175,7 +261,7 @@ export function HabitSheet({
                 onClick={() =>
                   schedule.mutate(
                     { id: habit.id, schedule: { schedule_kind: "paused" } },
-                    { onSuccess: onClose },
+                    { onSuccess: close },
                   )
                 }
               >

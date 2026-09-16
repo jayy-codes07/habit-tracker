@@ -17,7 +17,7 @@ export type Theme = "dark" | "light";
  * dark screen — which is why it is rewritten on every theme change rather than
  * left to the static tag in index.html.
  */
-const CANVAS: Record<Theme, string> = { dark: "#15151b", light: "#fbfbfd" };
+const CANVAS: Record<Theme, string> = { dark: "#131319", light: "#fcfcfd" };
 
 export function readTheme(): Theme {
   try {

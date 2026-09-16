@@ -5,6 +5,7 @@ import { useSession } from "./features/auth/queries";
 import { ApiError } from "./lib/api-client";
 import Day from "./routes/Day";
 import Grid from "./routes/Grid";
+import HabitHistory from "./routes/HabitHistory";
 import Habits from "./routes/Habits";
 import Login from "./routes/Login";
 import Review from "./routes/Review";
@@ -33,18 +34,28 @@ export default function App() {
 
   return (
     <>
-      <Tabs />
-      <Routes>
-        <Route path="/" element={<Day />} />
-        <Route path="/day/:date" element={<Day />} />
-        <Route path="/grid" element={<Grid />} />
-        <Route path="/habits" element={<Habits />} />
-        <Route path="/tasks" element={<Tasks />} />
-        {/* Both, as /day is: the bare path opens the current month. */}
-        <Route path="/review" element={<Review />} />
-        <Route path="/review/:month" element={<Review />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <Spine />
+      {/* Offset by the rail on a wide screen, and clear of the bottom chrome on
+          a phone. The safe-area inset is zero in a browser tab and the home
+          indicator's height in an installed app. */}
+      <div className="pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pt-0 md:pb-0 md:pl-[4.875rem]">
+        <Routes>
+          <Route path="/" element={<Day />} />
+          <Route path="/day/:date" element={<Day />} />
+          <Route path="/grid" element={<Grid />} />
+          <Route path="/habits" element={<Habits />} />
+          {/* One level below the list, and the only screen that is about a single
+              habit over its whole life rather than about a day, a week or a
+              month. Reached from the Habits list and from the sheet, which is
+              where you notice a habit has gone strange. */}
+          <Route path="/habits/:id" element={<HabitHistory />} />
+          <Route path="/tasks" element={<Tasks />} />
+          {/* Both, as /day is: the bare path opens the current month. */}
+          <Route path="/review" element={<Review />} />
+          <Route path="/review/:month" element={<Review />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </div>
     </>
   );
 }
@@ -52,7 +63,7 @@ export default function App() {
 /** Nothing for the first moment, so a fast session check never flashes. */
 const Boot = () => (
   <div className="grid min-h-dvh place-items-center">
-    <p className="text-muted animate-[fade-in_200ms_400ms_both]">Loading…</p>
+    <p className="label text-muted animate-[fade-in_200ms_400ms_both]">Loading</p>
   </div>
 );
 
@@ -71,74 +82,94 @@ const Unreachable = ({ error, onRetry }: { error: unknown; onRetry: () => void }
 );
 
 /**
- * Five screens, so five words and no chrome around them. It lives here rather
- * than in components/ because it is the only thing in the app that knows what
- * the URLs are, and that knowledge belongs next to the routes.
+ * THE SPINE — the instrument's one piece of persistent chrome, and the only
+ * thing in the app that knows what the URLs are.
+ *
+ * Five screens, five words, and an axis. The five are positions ON that axis:
+ * the active one takes ink and raises a tick out of the rule, which is the same
+ * reading the range dial uses on Pattern and the same reading a scale position
+ * has anywhere. It is labelled with words rather than glyphs because obvious
+ * beats clever, and the instrument character comes from the tick and the rule,
+ * not from hiding the names.
+ *
+ * It sits at the BOTTOM on a phone and on the LEFT on a wider screen. The old
+ * row was a 44px bar across the top; this is 46px in thumb reach, which is two
+ * pixels for the one gesture a phone-first app makes most. It also frees the
+ * top edge of every screen, which is where the date now is.
  *
  * Each tab points at its bare path rather than the date or month being viewed,
  * so the tab you are already on is also the way back to now.
  *
  * Habits and Tasks sit last because you visit them to decide something rather
- * than to look at something; the three reading screens stay together.
- *
- * Five words and nothing else. "Sign out" used to sit at the end of this row,
- * where it took a seventh of a 360px phone to offer the one thing you do here
- * least often, and pushed the five tabs into a scroller to do it. It lives in
- * Settings now, next to the theme and the export — the other three things that
- * are about the account rather than about a day. The row still scrolls rather
- * than wrapping if it ever has to, but at any width that fits, nothing moves.
+ * than to look at something; the three reading screens stay together. Settings
+ * live at the foot of /habits — there are three of them, and a sixth position
+ * for a thing you touch twice a year would cost a fifth of a small phone.
  */
-function Tabs() {
+const SCREENS = [
+  { to: "/", label: "Day" },
+  { to: "/grid", label: "Pattern" },
+  { to: "/review", label: "Review" },
+  { to: "/habits", label: "Habits" },
+  { to: "/tasks", label: "Tasks" },
+] as const;
+
+function Spine() {
   const { pathname } = useLocation();
   const onGrid = pathname.startsWith("/grid");
   const onReview = pathname.startsWith("/review");
   const onHabits = pathname.startsWith("/habits");
   const onTasks = pathname.startsWith("/tasks");
+  const active = onGrid
+    ? "/grid"
+    : onReview
+      ? "/review"
+      : onHabits
+        ? "/habits"
+        : onTasks
+          ? "/tasks"
+          : "/";
 
   return (
-    // The safe-area padding below is zero in a browser tab and the status bar's
-    // height in an installed app, where viewport-fit=cover lets the page reach
-    // under it. Spelling the utility out in prose here would be a mistake:
-    // Tailwind scans this file as raw text, comments included, and would compile
-    // the example into a rule that Lightning CSS then rejects.
-    <nav className="border-line border-b pt-[env(safe-area-inset-top)]">
-      <div className="[scrollbar-width:none] mx-auto flex w-full max-w-[68rem] items-center gap-1 overflow-x-auto px-4 sm:px-6 lg:px-8 [&::-webkit-scrollbar]:hidden">
-        <Tab to="/" active={!onGrid && !onReview && !onHabits && !onTasks}>
-          Day
-        </Tab>
-        <Tab to="/grid" active={onGrid}>
-          Grid
-        </Tab>
-        <Tab to="/review" active={onReview}>
-          Review
-        </Tab>
-        <Tab to="/habits" active={onHabits}>
-          Habits
-        </Tab>
-        <Tab to="/tasks" active={onTasks}>
-          Tasks
-        </Tab>
+    <nav
+      aria-label="Screens"
+      className={
+        // Phone: a bar along the bottom edge, above the home indicator. Wide:
+        // a rail down the left, whose right edge IS the axis the ticks sit on.
+        "border-baseline bg-canvas fixed z-30 " +
+        "inset-x-0 bottom-0 border-t pb-[env(safe-area-inset-bottom)] " +
+        "md:inset-y-0 md:right-auto md:left-0 md:w-[4.875rem] md:border-t-0 md:border-r md:pb-0 md:pt-[env(safe-area-inset-top)]"
+      }
+    >
+      <div className="flex md:mt-6 md:flex-col md:items-stretch">
+        {SCREENS.map((screen) => (
+          <Position key={screen.to} to={screen.to} active={screen.to === active}>
+            {screen.label}
+          </Position>
+        ))}
       </div>
     </nav>
   );
 }
 
-function Tab({ to, active, children }: { to: string; active: boolean; children: string }) {
+function Position({ to, active, children }: { to: string; active: boolean; children: string }) {
   return (
     <Link
       to={to}
       aria-current={active ? "page" : undefined}
-      className={`text-meta relative flex min-h-11 shrink-0 items-center px-2 font-medium transition-colors ${
+      className={`label relative flex min-h-[2.875rem] flex-1 items-center justify-center transition-colors md:h-[2.625rem] md:flex-none md:justify-start md:pr-3.5 md:pl-2.5 ${
         active ? "text-ink" : "text-muted hover:text-ink"
       }`}
     >
       {children}
-      {/* Sits on the nav's own border rather than above it, so the underline
-          reads as the tab breaking through the line. */}
+      {/*
+       * A tick rising OUT of the axis, not an underline floating beside it.
+       * Horizontal on a phone, where the axis is the bar's top edge; vertical
+       * on the rail, where the axis is its right edge.
+       */}
       {active && (
         <span
           aria-hidden="true"
-          className="bg-ink absolute inset-x-2 -bottom-px h-0.5 rounded-full"
+          className="bg-ink absolute -top-px left-1/2 h-2.5 w-0.5 -translate-x-1/2 md:top-1/2 md:left-auto md:-right-px md:h-0.5 md:w-2.5 md:translate-x-0 md:-translate-y-1/2"
         />
       )}
     </Link>

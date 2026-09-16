@@ -65,11 +65,11 @@ function TaskRow({
   const patch = usePatchTask();
 
   return (
-    <li className="border-line/70 flex items-center gap-1 border-b last:border-b-0">
+    <li className="border-grid/70 flex items-center gap-1 border-b last:border-b-0">
       {/* The checkbox is its own label so ticking never opens the sheet, and
           the title is its own button so opening never ticks. Two targets, two
           jobs — the mistake is expensive in both directions. */}
-      <label className="has-[:focus-visible]:outline-ink active:bg-raised -ml-2 grid h-12 w-10 shrink-0 cursor-pointer place-items-center rounded-lg transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2">
+      <label className="has-[:focus-visible]:outline-ink active:bg-raised -ml-2 grid h-12 w-10 shrink-0 cursor-pointer place-items-center transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2">
         <input
           type="checkbox"
           checked={task.completed}
@@ -79,8 +79,8 @@ function TaskRow({
         />
         <span
           aria-hidden="true"
-          className={`grid h-5 w-5 place-items-center rounded-full border-2 transition-colors ${
-            task.completed ? "bg-muted border-muted text-canvas" : "border-line-strong"
+          className={`grid h-3.5 w-3.5 place-items-center border-[1.5px] transition-colors ${
+            task.completed ? "bg-muted border-muted text-canvas" : "border-baseline"
           }`}
         >
           {task.completed && <Check />}
@@ -90,13 +90,13 @@ function TaskRow({
       <button
         type="button"
         onClick={onOpen}
-        className="active:bg-raised flex min-h-12 flex-1 items-center gap-3 rounded-lg px-2 text-left transition-colors"
+        className="active:bg-raised flex min-h-12 flex-1 items-center gap-3 px-2 text-left transition-colors"
       >
         <span className={`flex-1 ${task.completed ? "text-muted line-through" : ""}`}>
           {task.title}
         </span>
         {task.due_date && !task.completed && (
-          <span className={`text-meta tabular shrink-0 ${overdue ? "text-warn" : "text-muted"}`}>
+          <span className={`label shrink-0 ${overdue ? "text-warn" : "text-muted"}`}>
             {dueLabel(task.due_date, today)}
           </span>
         )}
@@ -124,7 +124,10 @@ function Group({
 
   return (
     <section aria-labelledby={id} className="mt-7 first:mt-0">
-      <h2 id={id} className={`text-meta pb-1 font-medium ${overdue ? "text-warn" : "text-muted"}`}>
+      <h2
+        id={id}
+        className={`label border-baseline mb-1 border-b pb-2 ${overdue ? "text-warn" : "text-muted"}`}
+      >
         {heading}
       </h2>
       <ul>
@@ -168,11 +171,11 @@ function AddTask() {
   };
 
   return (
-    <form onSubmit={submit} className="border-line mb-7 border-b pb-5">
+    <form onSubmit={submit} className="border-grid mb-7 border-b pb-5">
       <div className="flex items-center gap-2">
         <span
           aria-hidden="true"
-          className="text-muted text-row w-5 shrink-0 text-center leading-none"
+          className="text-muted text-name font-serif w-5 shrink-0 text-center leading-none"
         >
           +
         </span>
@@ -187,7 +190,7 @@ function AddTask() {
         <button
           type="submit"
           disabled={!title.trim() || create.isPending}
-          className="text-meta min-h-11 shrink-0 px-2 font-semibold disabled:opacity-30"
+          className="label min-h-11 shrink-0 px-2 disabled:opacity-30"
         >
           {create.isPending ? "Adding…" : "Add"}
         </button>
@@ -196,7 +199,7 @@ function AddTask() {
       {/* Offered, never assumed — and only once there is something to date. */}
       {title.trim() && (
         <div className="mt-1 flex items-center gap-2 pl-7">
-          <label htmlFor="new-task-due" className="text-meta text-muted shrink-0">
+          <label htmlFor="new-task-due" className="label text-muted shrink-0">
             Due
           </label>
           <input
@@ -204,9 +207,9 @@ function AddTask() {
             type="date"
             value={due}
             onChange={(event) => setDue(event.target.value)}
-            className="border-line-strong bg-canvas text-field min-h-11 rounded-lg border px-3 outline-none"
+            className="border-baseline bg-canvas text-field min-h-11 border px-3 outline-none"
           />
-          {due === "" && <span className="text-meta text-muted">optional</span>}
+          {due === "" && <span className="label text-muted">optional</span>}
         </div>
       )}
 
@@ -266,8 +269,8 @@ export default function Tasks() {
 
   return (
     <div className="mx-auto w-full max-w-[68rem] px-4 pb-20 sm:px-6 lg:px-8">
-      <header className="pt-5 pb-7 sm:pt-8 lg:max-w-[46rem]">
-        <p className="text-meta text-muted">
+      <header className="pt-5 pb-7 sm:pt-8">
+        <p className="label text-muted">
           {/* Every count here is taken from an array that is empty until the
               payload lands, so this must say nothing rather than guess. It sits
               outside the error branch below and would otherwise report "Nothing
@@ -282,7 +285,7 @@ export default function Tasks() {
                 : "Nothing left"
               : `${open.length} open${overdue.length > 0 ? ` · ${overdue.length} overdue` : ""}`}
         </p>
-        <h1 className="font-serif text-date mt-1 tracking-[-0.015em]">Tasks</h1>
+        <h1 className="font-serif text-title mt-2 tracking-[-0.02em]">Tasks</h1>
       </header>
 
       {query.isError && !query.data ? (
@@ -290,162 +293,164 @@ export default function Tasks() {
       ) : !query.data ? (
         <TasksSkeleton />
       ) : (
-        <main className="lg:max-w-[46rem]">
-          <AddTask />
+        <main className="md:grid md:grid-cols-[minmax(0,1fr)_17rem] md:items-start md:gap-x-8 lg:grid-cols-[minmax(0,1fr)_19rem] lg:gap-x-12 xl:gap-x-16">
+          <div className="md:col-start-1 md:row-start-1">
+            <AddTask />
 
-          {/* The quick way back, for the removal you regret immediately. The
+            {/* The quick way back, for the removal you regret immediately. The
               "removed" drawer below is the patient one, so this is a
               convenience rather than the last chance — but it still waits
               rather than timing out, because a bar that vanishes on its own
               takes the obvious way back with it and leaves you hunting. It must
               be dismissable, or the one answer the screen accepts is "undo". */}
-          {removed && (
-            <div
-              role="status"
-              className="border-line bg-surface mb-5 flex items-center gap-1 rounded-xl border py-1 pr-1 pl-4"
-            >
-              <p className="text-meta flex-1 truncate">Removed “{removed.title}”.</p>
-              <button
-                type="button"
-                disabled={patch.isPending}
-                onClick={() =>
-                  patch.mutate(
-                    { id: removed.id, patch: { archived: false } },
-                    { onSuccess: () => setRemoved(null) },
-                  )
-                }
-                className="text-meta min-h-11 shrink-0 px-2 font-semibold underline underline-offset-4"
+            {removed && (
+              <div
+                role="status"
+                className="border-grid bg-canvas mb-5 flex items-center gap-1 border py-1 pr-1 pl-4"
               >
-                {patch.isPending ? "Undoing…" : "Undo"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setRemoved(null)}
-                aria-label="Dismiss"
-                className="text-muted hover:text-ink hover:bg-raised grid h-11 w-9 shrink-0 place-items-center rounded-lg transition-colors"
-              >
-                <svg
-                  viewBox="0 0 16 16"
-                  className="h-3.5 w-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={1.8}
-                  strokeLinecap="round"
-                  aria-hidden="true"
+                <p className="text-meta flex-1 truncate">Removed “{removed.title}”.</p>
+                <button
+                  type="button"
+                  disabled={patch.isPending}
+                  onClick={() =>
+                    patch.mutate(
+                      { id: removed.id, patch: { archived: false } },
+                      { onSuccess: () => setRemoved(null) },
+                    )
+                  }
+                  className="label min-h-11 shrink-0 px-2 underline underline-offset-4"
                 >
-                  <path d="M4 4l8 8M12 4l-8 8" />
-                </svg>
-              </button>
-            </div>
-          )}
+                  {patch.isPending ? "Undoing…" : "Undo"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRemoved(null)}
+                  aria-label="Dismiss"
+                  className="text-muted hover:text-ink hover:bg-raised grid h-11 w-9 shrink-0 place-items-center transition-colors"
+                >
+                  <svg
+                    viewBox="0 0 16 16"
+                    className="h-3.5 w-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.8}
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M4 4l8 8M12 4l-8 8" />
+                  </svg>
+                </button>
+              </div>
+            )}
 
-          {/* The empty state counts removed tasks too: "nothing on the list" is
+            {/* The empty state counts removed tasks too: "nothing on the list" is
               false when there is a drawer of them to restore from. */}
-          {open.length === 0 && done.length === 0 && archived.length === 0 ? (
-            <p className="text-muted max-w-sm">
-              Nothing on the list. Add what you would otherwise keep remembering.
-            </p>
-          ) : (
-            <>
-              <Group
-                heading="Overdue"
-                tasks={overdue}
-                today={today}
-                overdue
-                onOpen={(task) => setEditing(task.id)}
-              />
-              <Group
-                heading="Scheduled"
-                tasks={scheduled}
-                today={today}
-                onOpen={(task) => setEditing(task.id)}
-              />
-              <Group
-                heading="Anytime"
-                tasks={anytime}
-                today={today}
-                onOpen={(task) => setEditing(task.id)}
-              />
+            {open.length === 0 && done.length === 0 && archived.length === 0 ? (
+              <p className="text-muted max-w-sm">
+                Nothing on the list. Add what you would otherwise keep remembering.
+              </p>
+            ) : (
+              <>
+                <Group
+                  heading="Overdue"
+                  tasks={overdue}
+                  today={today}
+                  overdue
+                  onOpen={(task) => setEditing(task.id)}
+                />
+                <Group
+                  heading="Scheduled"
+                  tasks={scheduled}
+                  today={today}
+                  onOpen={(task) => setEditing(task.id)}
+                />
+                <Group
+                  heading="Anytime"
+                  tasks={anytime}
+                  today={today}
+                  onOpen={(task) => setEditing(task.id)}
+                />
+              </>
+            )}
+          </div>
 
-              {done.length > 0 && (
-                <details className="group border-line mt-8 border-t pt-1">
-                  <summary className="text-meta text-muted hover:text-ink flex min-h-11 cursor-pointer list-none items-center gap-1.5">
-                    <Chevron className="transition-transform group-open:rotate-90" />
-                    {done.length === 1 ? "One done" : `${done.length} done`}
-                  </summary>
-                  <ul className="opacity-70">
-                    {done.map((task) => (
-                      <TaskRow
-                        key={task.id}
-                        task={task}
-                        today={today}
-                        overdue={false}
-                        onOpen={() => setEditing(task.id)}
-                      />
-                    ))}
-                  </ul>
-                </details>
-              )}
+          <div className="mt-8 md:col-start-2 md:row-start-1 md:mt-0">
+            {done.length > 0 && (
+              <details className="group border-grid border-t pt-1 md:border-t-0 md:pt-0">
+                <summary className="label text-muted hover:text-ink flex min-h-11 cursor-pointer list-none items-center gap-1.5">
+                  <Chevron className="transition-transform group-open:rotate-90" />
+                  {done.length === 1 ? "One done" : `${done.length} done`}
+                </summary>
+                <ul className="opacity-70">
+                  {done.map((task) => (
+                    <TaskRow
+                      key={task.id}
+                      task={task}
+                      today={today}
+                      overdue={false}
+                      onOpen={() => setEditing(task.id)}
+                    />
+                  ))}
+                </ul>
+              </details>
+            )}
 
-              {/* Removed tasks, folded away below Done. The undo bar above
+            {/* Removed tasks, folded away below Done. The undo bar above
                   catches the slip you notice immediately; this is the way back
                   to one you notice next week. Rows are not TaskRow: a removed
                   task cannot be ticked, edited or removed again, and offering
                   those controls would only make it look like it was still on
                   the list. */}
-              {archived.length > 0 && (
-                <details className="group border-line mt-2 border-t pt-1">
-                  <summary className="text-meta text-muted hover:text-ink flex min-h-11 cursor-pointer list-none items-center gap-1.5">
-                    <Chevron className="transition-transform group-open:rotate-90" />
-                    {archived.length === 1 ? "One removed" : `${archived.length} removed`}
-                  </summary>
-                  <ul>
-                    {archived.map((task) => (
-                      <li
-                        key={task.id}
-                        className="border-line/70 flex items-center gap-3 border-b py-2 last:border-b-0"
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="text-muted block truncate">{task.title}</span>
-                          {task.archived_on && (
-                            <span className="text-micro text-muted">
-                              {/* archived_on, not archived_at: the instant's own
+            {archived.length > 0 && (
+              <details className="group border-grid mt-2 border-t pt-1">
+                <summary className="label text-muted hover:text-ink flex min-h-11 cursor-pointer list-none items-center gap-1.5">
+                  <Chevron className="transition-transform group-open:rotate-90" />
+                  {archived.length === 1 ? "One removed" : `${archived.length} removed`}
+                </summary>
+                <ul>
+                  {archived.map((task) => (
+                    <li
+                      key={task.id}
+                      className="border-grid/70 flex items-center gap-3 border-b py-2 last:border-b-0"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="text-muted block truncate">{task.title}</span>
+                        {task.archived_on && (
+                          <span className="label text-muted">
+                            {/* archived_on, not archived_at: the instant's own
                                   ISO string is UTC, and slicing it labelled a
                                   removal a day early for anyone living east of
                                   Greenwich. The server casts it in APP_TIMEZONE,
                                   as it already did for a habit's archived_on. */}
-                              Removed {formatDateShort(task.archived_on)}
-                            </span>
-                          )}
-                        </span>
-                        <button
-                          type="button"
-                          disabled={patch.isPending}
-                          onClick={() =>
-                            patch.mutate(
-                              { id: task.id, patch: { archived: false } },
-                              {
-                                // The same task can be in both places at once.
-                                // Restoring it here must not leave the undo bar
-                                // still offering to undo what just happened.
-                                onSuccess: () =>
-                                  setRemoved((current) =>
-                                    current?.id === task.id ? null : current,
-                                  ),
-                              },
-                            )
-                          }
-                          className="border-line-strong hover:bg-raised text-meta min-h-11 shrink-0 rounded-lg border px-3 font-medium disabled:opacity-40"
-                        >
-                          Restore
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-            </>
-          )}
+                            Removed {formatDateShort(task.archived_on)}
+                          </span>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={patch.isPending}
+                        onClick={() =>
+                          patch.mutate(
+                            { id: task.id, patch: { archived: false } },
+                            {
+                              // The same task can be in both places at once.
+                              // Restoring it here must not leave the undo bar
+                              // still offering to undo what just happened.
+                              onSuccess: () =>
+                                setRemoved((current) => (current?.id === task.id ? null : current)),
+                            },
+                          )
+                        }
+                        className="label min-h-11 shrink-0 px-2 underline decoration-[var(--c-baseline)] underline-offset-4 disabled:opacity-40"
+                      >
+                        Restore
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
         </main>
       )}
 

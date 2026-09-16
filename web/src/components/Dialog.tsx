@@ -38,14 +38,14 @@ export function Dialog({
     >
       <div className="px-5 pt-5 pb-6">
         <div className="flex items-start justify-between gap-4 pb-4">
-          <h2 className="text-section font-semibold tracking-[-0.01em]">{title}</h2>
+          <h2 className="label text-ink">{title}</h2>
           {/* Tapping the backdrop closes it too, but nothing on a phone says
               so. A visible control is the discoverable way out. */}
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="text-muted hover:text-ink hover:bg-raised -mt-1.5 -mr-2 grid h-11 w-11 shrink-0 place-items-center rounded-lg transition-colors"
+            className="text-muted hover:text-ink hover:bg-raised -mt-1.5 -mr-2 grid h-11 w-11 shrink-0 place-items-center transition-colors"
           >
             <svg
               viewBox="0 0 16 16"

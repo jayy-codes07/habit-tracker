@@ -18,14 +18,14 @@
  * row where it cost a seventh of a small phone's width.
  */
 import { useState } from "react";
+import { Link } from "react-router";
 
 import { ErrorBox } from "../components/ErrorBox";
 import { Choice } from "../components/Choice";
-import { ICON_BUTTON } from "../components/form";
+import { ICON_BUTTON, PRIMARY, QUIET } from "../components/form";
 import { Chevron } from "../components/icons";
 import { Skeleton } from "../components/Skeleton";
 import { useLogout } from "../features/auth/queries";
-import { HabitEditor } from "../features/habits/HabitEditor";
 import { NewHabitDialog } from "../features/habits/NewHabitDialog";
 import { useHabits, useReorderHabits } from "../features/habits/queries";
 import { scheduleWords } from "../features/habits/verdict";
@@ -42,35 +42,60 @@ import type { Habit, Id } from "../types";
  */
 function summary(habit: Habit): string {
   if (!habit.schedule) return `Starts ${formatDateShort(habit.start_date)}`;
-  const { schedule_kind: kind, schedule_days: days, weekly_target: target } = habit.schedule;
-  return scheduleWords(kind, days, target);
+  const {
+    schedule_kind: kind,
+    schedule_days: days,
+    weekly_target: target,
+    target_value: amount,
+  } = habit.schedule;
+  const now = scheduleWords(kind, days, target, amount, habit.unit);
+
+  // A change that has been decided but has not started — a switch between
+  // certain days and times a week waits for the following Monday. Said here as
+  // well as in the editor so it is not something you have to go looking for,
+  // and always after the current one, which is what the row is about.
+  const next = habit.next_schedule;
+  if (!next) return now;
+
+  const words = scheduleWords(
+    next.schedule_kind,
+    next.schedule_days,
+    next.weekly_target,
+    next.target_value,
+    habit.unit,
+  );
+  return `${now} · then ${words} from ${formatDateShort(next.effective_from)}`;
 }
 
 function Row({
   habit,
-  onOpen,
   reorder,
 }: {
   habit: Habit;
-  onOpen: () => void;
   reorder: { onMove: (delta: number) => void; first: boolean; last: boolean } | null;
 }) {
   const paused = habit.schedule?.schedule_kind === "paused";
 
   return (
-    <li className="border-line/70 flex items-center gap-1 border-b last:border-b-0">
-      <button
-        type="button"
-        onClick={onOpen}
-        // In reorder mode the row is still the way into the editor, but the
-        // arrows are what the thumb is aiming at, so it stops inviting taps.
-        className={`active:bg-raised -mx-2 flex min-h-14 flex-1 items-center gap-3 rounded-lg px-2 text-left transition-colors ${
+    <li className="border-grid/70 flex items-center gap-1 border-b last:border-b-0">
+      {/*
+       * Into the habit's own history, not straight into the editor. The chevron
+       * then means what a chevron means — there is more of this underneath —
+       * and editing is reached from the one screen that shows you what you would
+       * be editing. It is also the only route to an archived habit's record.
+       *
+       * In reorder mode the row is still the way in, but the arrows are what the
+       * thumb is aiming at, so it stops inviting taps.
+       */}
+      <Link
+        to={`/habits/${habit.id}`}
+        className={`active:bg-raised -mx-2 flex min-h-14 flex-1 items-center gap-3 px-2 text-left transition-colors ${
           reorder ? "" : "hover:bg-raised/60"
         }`}
       >
         <span
           aria-hidden="true"
-          className="h-2.5 w-2.5 shrink-0 rounded-full"
+          className="h-5 w-[3px] shrink-0"
           style={{
             background: `var(--c-${habit.color_token})`,
             // A paused habit is still itself, just not being asked of — the
@@ -79,11 +104,11 @@ function Row({
           }}
         />
         <span className="min-w-0 flex-1 sm:flex sm:items-baseline sm:gap-4">
-          <span className="text-row block truncate font-medium sm:flex-1">{habit.name}</span>
-          <span className="text-meta text-muted block sm:shrink-0">{summary(habit)}</span>
+          <span className="text-name block truncate font-serif sm:flex-1">{habit.name}</span>
+          <span className="label text-muted block sm:shrink-0">{summary(habit)}</span>
         </span>
         {!reorder && <Chevron className="text-muted shrink-0" />}
-      </button>
+      </Link>
 
       {reorder && (
         <span className="flex shrink-0 items-center gap-1">
@@ -131,15 +156,18 @@ function Settings() {
   };
 
   return (
-    <section aria-labelledby="settings-heading" className="border-line mt-14 border-t pt-6">
-      <h2 id="settings-heading" className="text-section pb-3 font-semibold tracking-[-0.01em]">
+    <section
+      aria-labelledby="settings-heading"
+      className="border-grid border-t pt-6 md:border-t-0 md:pt-0"
+    >
+      <h2 id="settings-heading" className="label text-ink border-baseline mb-3 border-b pb-2">
         Settings
       </h2>
 
       <div className="grid gap-6 sm:max-w-sm">
         <fieldset>
-          <legend className="text-meta text-muted pb-1.5">Appearance</legend>
-          <div className="grid grid-cols-2 gap-2">
+          <legend className="label text-muted pb-2.5">Appearance</legend>
+          <div className="flex max-w-[16rem]">
             <Choice
               type="radio"
               name="theme"
@@ -162,12 +190,8 @@ function Settings() {
         </fieldset>
 
         <div>
-          <h3 className="text-meta text-muted pb-1.5">Your data</h3>
-          <a
-            href="/api/export"
-            download
-            className="border-line-strong hover:bg-raised grid min-h-12 place-items-center rounded-lg border px-4 font-medium"
-          >
+          <h3 className="label text-muted pb-2.5">Your data</h3>
+          <a href="/api/export" download className={QUIET}>
             Download everything
           </a>
           <p className="text-meta text-muted mt-2">
@@ -181,12 +205,12 @@ function Settings() {
             screens into a scroller. Nothing is confirmed: the session is a
             cookie and signing back in is one field. */}
         <div>
-          <h3 className="text-meta text-muted pb-1.5">Session</h3>
+          <h3 className="label text-muted pb-2.5">Session</h3>
           <button
             type="button"
             onClick={() => logout.mutate()}
             disabled={logout.isPending}
-            className="border-line-strong hover:bg-raised min-h-12 w-full rounded-lg border px-4 font-medium disabled:opacity-40"
+            className={QUIET}
           >
             {logout.isPending ? "Signing out…" : "Sign out"}
           </button>
@@ -214,14 +238,11 @@ export default function Habits() {
   const reorder = useReorderHabits(true);
 
   const [newHabit, setNewHabit] = useState(false);
-  const [editing, setEditing] = useState<Id | null>(null);
   const [reordering, setReordering] = useState(false);
 
   const habits = query.data ?? [];
   const active = habits.filter((habit) => habit.archived_on === null);
   const archived = habits.filter((habit) => habit.archived_on !== null);
-
-  const open = habits.find((habit) => habit.id === editing) ?? null;
 
   /**
    * The server rejects an order that is not every active habit exactly once, so
@@ -239,9 +260,9 @@ export default function Habits() {
 
   return (
     <div className="mx-auto w-full max-w-[68rem] px-4 pb-20 sm:px-6 lg:px-8">
-      <header className="pt-5 pb-7 sm:pt-8 lg:max-w-[46rem]">
+      <header className="pt-5 pb-7 sm:pt-8">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-meta text-muted">
+          <p className="label text-muted">
             {active.length === 0
               ? "Nothing tracked yet"
               : active.length === 1
@@ -251,25 +272,17 @@ export default function Habits() {
 
           <div className="flex shrink-0 items-center gap-1.5">
             {active.length > 1 && (
-              <button
-                type="button"
-                onClick={() => setReordering(!reordering)}
-                className="border-line-strong hover:bg-raised text-meta min-h-11 rounded-lg border px-3 font-medium"
-              >
+              <button type="button" onClick={() => setReordering(!reordering)} className={QUIET}>
                 {reordering ? "Done" : "Reorder"}
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => setNewHabit(true)}
-              className="bg-ink text-canvas text-meta min-h-11 rounded-lg px-3 font-semibold"
-            >
+            <button type="button" onClick={() => setNewHabit(true)} className={`${PRIMARY} w-auto`}>
               New habit
             </button>
           </div>
         </div>
 
-        <h1 className="font-serif text-date mt-1 tracking-[-0.015em]">Habits</h1>
+        <h1 className="font-serif text-title mt-2 tracking-[-0.02em]">Habits</h1>
       </header>
 
       {query.isError && !query.data ? (
@@ -277,70 +290,68 @@ export default function Habits() {
       ) : !query.data ? (
         <HabitsSkeleton />
       ) : (
-        <main className="lg:max-w-[46rem]">
-          {/* A failed move has already rolled back on screen, so the only thing
+        <main className="md:grid md:grid-cols-[minmax(0,1fr)_17rem] md:items-start md:gap-x-8 lg:grid-cols-[minmax(0,1fr)_19rem] lg:gap-x-12 xl:gap-x-16">
+          <div className="md:col-start-1 md:row-start-1">
+            {/* A failed move has already rolled back on screen, so the only thing
               left to do is say why the list snapped back. */}
-          {reorder.isError && (
-            <p role="alert" className="text-warn text-meta pb-2">
-              {reorder.error.message}
-            </p>
-          )}
-
-          {active.length === 0 ? (
-            <section>
-              <p className="text-row">Nothing tracked yet.</p>
-              <p className="text-muted mt-1 max-w-sm">
-                Start with one habit you actually want to keep. You can add more once it sticks.
+            {reorder.isError && (
+              <p role="alert" className="text-warn text-meta pb-2">
+                {reorder.error.message}
               </p>
-              <button
-                type="button"
-                onClick={() => setNewHabit(true)}
-                className="bg-ink text-canvas mt-5 min-h-12 rounded-lg px-5 font-semibold"
-              >
-                Add the first habit
-              </button>
-            </section>
-          ) : (
-            <ul>
-              {active.map((habit, index) => (
-                <Row
-                  key={habit.id}
-                  habit={habit}
-                  onOpen={() => setEditing(habit.id)}
-                  reorder={
-                    reordering
-                      ? {
-                          onMove: (delta: number) => move(habit.id, delta),
-                          first: index === 0,
-                          last: index === active.length - 1,
-                        }
-                      : null
-                  }
-                />
-              ))}
-            </ul>
-          )}
+            )}
 
-          {archived.length > 0 && (
-            <details className="group border-line mt-6 border-t pt-1">
-              <summary className="text-meta text-muted hover:text-ink flex min-h-11 cursor-pointer list-none items-center gap-1.5">
-                <Chevron className="transition-transform group-open:rotate-90" />
-                {archived.length === 1 ? "One archived habit" : `${archived.length} archived`}
-              </summary>
-              <ul className="opacity-70">
-                {archived.map((habit) => (
+            {active.length === 0 ? (
+              <section>
+                <p className="text-name font-serif">Nothing tracked yet.</p>
+                <p className="text-muted mt-1 max-w-sm">
+                  Start with one habit you actually want to keep. You can add more once it sticks.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setNewHabit(true)}
+                  className={`${PRIMARY} mt-6 w-auto`}
+                >
+                  Add the first habit
+                </button>
+              </section>
+            ) : (
+              <ul>
+                {active.map((habit, index) => (
                   <Row
                     key={habit.id}
                     habit={habit}
-                    onOpen={() => setEditing(habit.id)}
-                    reorder={null}
+                    reorder={
+                      reordering
+                        ? {
+                            onMove: (delta: number) => move(habit.id, delta),
+                            first: index === 0,
+                            last: index === active.length - 1,
+                          }
+                        : null
+                    }
                   />
                 ))}
               </ul>
-            </details>
-          )}
+            )}
 
-          <Settings />
+            {archived.length > 0 && (
+              <details className="group border-grid mt-6 border-t pt-1">
+                <summary className="label text-muted hover:text-ink flex min-h-11 cursor-pointer list-none items-center gap-1.5">
+                  <Chevron className="transition-transform group-open:rotate-90" />
+                  {archived.length === 1 ? "One archived habit" : `${archived.length} archived`}
+                </summary>
+                <ul className="opacity-70">
+                  {archived.map((habit) => (
+                    <Row key={habit.id} habit={habit} reorder={null} />
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+
+          <div className="mt-14 md:col-start-2 md:row-start-1 md:mt-0">
+            <Settings />
+          </div>
         </main>
       )}
 
@@ -349,7 +360,6 @@ export default function Habits() {
         onClose={() => setNewHabit(false)}
         taken={active.map((habit) => habit.color_token)}
       />
-      {open && <HabitEditor habit={open} onClose={() => setEditing(null)} />}
     </div>
   );
 }

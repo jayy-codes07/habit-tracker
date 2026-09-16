@@ -10,6 +10,8 @@
  * amounted to given the schedule in force. A day done when nothing was asked is
  * status "done" and verdict "bonus", and the row has to show both facts.
  */
+import type { CSSProperties } from "react";
+
 import type { DayHabit, Verdict } from "../../types";
 
 /** How the control on a habit row is drawn. */
@@ -54,9 +56,37 @@ export function stateLabel(habit: DayHabit): string {
 }
 
 /**
- * The quiet second line: the single fact that matters most for this habit on
- * this day. Not a list of everything known about it — a weekly habit's streak
- * is a real number, but its week's progress is the one that changes behaviour.
+ * The word for the mark drawn on the row — the key, said where the symbol is.
+ *
+ * A row's state was legible only as geometry: a filled square, a hollow warm
+ * one, a diamond, a gap in the rule. That is a vocabulary to be learnt before
+ * the screen can be read, and nobody learns a vocabulary from a tracker. Only a
+ * screen reader was ever told in words (see stateLabel).
+ *
+ * Null where the line beneath already says it: `extra` is spelt out as "Extra,
+ * not scheduled", and an open day that has not been logged yet is not a state
+ * to announce — the dashed target says there is something to hit.
+ */
+function markWord(habit: DayHabit): string | null {
+  switch (markOf(habit)) {
+    case "done":
+      return "Done";
+    case "skipped":
+      return "Skipped";
+    case "missed":
+      return "Missed";
+    case "open":
+      return habit.verdict === "unlogged" ? "Not logged" : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * The quiet second line: what the mark is, then the single other fact that
+ * matters most for this habit on this day. Not a list of everything known about
+ * it — a weekly habit's streak is a real number, but its week's progress is the
+ * one that changes behaviour.
  */
 export function metaLine(habit: DayHabit): string | null {
   if (habit.verdict === "inactive") return "Not started yet";
@@ -64,17 +94,39 @@ export function metaLine(habit: DayHabit): string | null {
   // reading the verdict here left a paused habit describing its week instead.
   if (habit.paused) return "Paused";
 
+  const parts = [markWord(habit)];
+
   if (habit.schedule_kind === "weekly") {
-    if (!habit.week) return "No target this week";
-    if (habit.week.met) return "Weekly target met";
-    return `${habit.week.done} of ${habit.week.target} this week`;
+    if (!habit.week) parts.push("No target this week");
+    else if (habit.week.met) parts.push("Weekly target met");
+    else parts.push(`${habit.week.done} of ${habit.week.target} this week`);
+  } else if (!habit.scheduled) {
+    // "Extra" alone does not say what was extra about it; a day worked when
+    // nothing was asked is worth naming plainly.
+    parts.push(habit.status === "done" ? "Extra, not scheduled" : "Rest day");
+  } else if (habit.streak > 0) {
+    parts.push(`${habit.streak} day streak`);
   }
 
-  // "Extra" alone does not say what was extra about it; a day worked when
-  // nothing was asked is worth naming plainly.
-  if (!habit.scheduled) return habit.status === "done" ? "Extra, not scheduled" : "Rest day";
-  if (habit.streak > 0) return `${habit.streak} day streak`;
-  return null;
+  const line = parts.filter(Boolean).join(" · ");
+  return line === "" ? null : line;
+}
+
+/**
+ * What was measured today, for the row — "3 of 5 km", or "3 km" when the habit
+ * aims at nothing.
+ *
+ * Null whenever there is nothing measured to say, which includes every binary
+ * habit and every day that was done without being measured. Deliberately
+ * separate from metaLine: the meta line carries the single most important fact
+ * about the day, and a number is an additional one rather than a replacement —
+ * a weekly habit still needs to say where its week stands.
+ */
+export function amountLine(habit: DayHabit): string | null {
+  if (!habit.unit || habit.value === null) return null;
+  return habit.target_value === null
+    ? `${habit.value} ${habit.unit}`
+    : `${habit.value} of ${habit.target_value} ${habit.unit}`;
 }
 
 /**
@@ -93,15 +145,36 @@ export function summarise(habits: DayHabit[]) {
   return { total: actionable.length, done, left: actionable.length - settled };
 }
 
-/** The schedule, in the words a person would use. */
+/**
+ * The schedule, in the words a person would use.
+ *
+ * `amount` and `unit` are the measured target, and they are appended rather than
+ * folded in: "Mon, Wed, Fri · 5 km" says the two separate things the schedule
+ * actually holds — which days, and how much each time. A pause says nothing
+ * about either, because it asks for neither.
+ */
 export function scheduleWords(
   kind: "fixed" | "weekly" | "paused",
   days: number[] | null,
   target: number | null,
+  amount: number | null = null,
+  unit: string | null = null,
 ): string {
   if (kind === "paused") return "Paused";
-  if (kind === "weekly") return target === 1 ? "Once a week" : `${target} times a week`;
 
+  const often =
+    kind === "weekly"
+      ? target === 1
+        ? "Once a week"
+        : `${target} times a week`
+      : everyWords(days);
+
+  // Both halves or neither: an amount with no unit is a number meaning nothing,
+  // and the server cannot store one anyway.
+  return amount !== null && unit ? `${often} · ${amount} ${unit}` : often;
+}
+
+function everyWords(days: number[] | null): string {
   const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const chosen = [...(days ?? [])].sort((a, b) => a - b);
   if (chosen.length === 7) return "Every day";
@@ -126,6 +199,85 @@ export const CELL: Record<string, Verdict> = {
   u: "unlogged",
   f: "future",
 };
+
+/**
+ * How the PAPER runs under one day of one channel.
+ *
+ * The drum is pre-ruled and the data is ink laid on top, so half the nine-state
+ * vocabulary is carried by the ruling rather than by anything drawn in the
+ * cell. Four treatments:
+ *
+ *   "none"  the habit did not exist — no paper at all
+ *   "dim"   ahead of the pen: blank paper, drawn at 38%
+ *   "peck"  paused — the ruling itself goes pecked across the span
+ *   "on"    a day the habit was alive and being asked of
+ *
+ * This is what lets `paused` and `unscheduled` stop being the same square. They
+ * were identical in the grid until now and the difference survived only in a
+ * tooltip; a pecked rule says it on the paper.
+ *
+ * Sheet.tsx groups consecutive days of the same treatment into ONE rule per
+ * run, which is why this answers per day and says nothing about geometry.
+ */
+export type Paper = "none" | "dim" | "peck" | "on";
+
+export function paperOf(verdict: Verdict): Paper {
+  switch (verdict) {
+    case "inactive":
+      return "none";
+    case "future":
+      return "dim";
+    case "paused":
+      return "peck";
+    default:
+      return "on";
+  }
+}
+
+/**
+ * The INK for one day of one habit. The single implementation — Sheet.tsx is
+ * its only caller, and Sheet is what both the grid and a habit's history draw
+ * with, so the two screens cannot quietly stop agreeing.
+ *
+ * Five of the nine verdicts return nothing at all, and that is the design: a
+ * rest day, a paused day, a future day and a day before the habit existed have
+ * no ink, and are told apart by the paper under them (see paperOf). What is
+ * left is four marks, and every distinction between them is SHAPE:
+ *
+ *   done      a filled square
+ *   bonus     the same square at 42% — lighter, and it survives greyscale
+ *   missed    a SOLID hollow ring
+ *   unlogged  a DOTTED hollow ring
+ *
+ * plus `skipped`, whose mark is markup rather than style — SkipMark in
+ * marks.tsx, because this file holds no JSX. A skipped day is bare paper with a
+ * dash across it, which reads at 11px because the dash now sits on the canvas
+ * rather than on a tray: --c-muted is 7:1 here against 2.4:1 before.
+ *
+ * Hue is the habit's identity and never the day's verdict. --c-warn appears on
+ * exactly one state, which is also hollow and also solid-versus-dotted, so
+ * colour is the third signal it carries and never the first. The whole
+ * vocabulary is verified in greyscale, in both themes, at the 11px cell by
+ * tests/state-vocabulary — an actual render of this function, not a mock-up.
+ */
+export function paint(verdict: Verdict, tint: string): CSSProperties {
+  switch (verdict) {
+    case "done":
+      return { background: tint };
+    case "bonus":
+      return { background: `color-mix(in srgb, ${tint} 42%, transparent)` };
+    case "missed":
+      return { boxShadow: "inset 0 0 0 1.5px var(--c-warn)" };
+    case "unlogged":
+      return {
+        outline: "1.5px dotted var(--c-baseline)",
+        outlineOffset: "-1.5px",
+      };
+    // done/bonus/missed/unlogged are ink; everything else is paper.
+    default:
+      return {};
+  }
+}
 
 /** A verdict in the words the interface uses, for one day of one habit. */
 export const VERDICT_LABEL: Record<Verdict, string> = {

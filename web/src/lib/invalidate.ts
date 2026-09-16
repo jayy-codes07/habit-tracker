@@ -12,10 +12,12 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 /** Everything derived from habit, task or journal rows. */
-const DERIVED = ["day", "grid", "review", "habits", "tasks"] as const;
+const DERIVED = ["day", "grid", "review", "history", "habits", "tasks"] as const;
 
 /** The scored reads only — the ones a log can change. */
-const SCORED = ["day", "grid", "review"] as const;
+// "history" is here because a habit's page carries its spine and its notes,
+// and a log written from the day screen changes both.
+const SCORED = ["day", "grid", "review", "history"] as const;
 
 export const invalidateAll = (client: QueryClient) => {
   for (const key of DERIVED) void client.invalidateQueries({ queryKey: [key] });

@@ -1,10 +1,14 @@
 /**
- * The five theme tokens, as five dots.
+ * The five theme tokens, as five pen bars.
  *
  * A colour identifies a habit and never says how a day went, so this is pure
- * identity — no state ever reaches these swatches. The ring rather than a tick
- * marks the choice, because a tick inside a coloured circle is the one mark
- * this app reserves for "done".
+ * identity — no state ever reaches these swatches. They are bars rather than
+ * dots because a bar is the shape the rest of the app uses for "this habit":
+ * the mark beside a name on Pattern, Review and a habit's own history. A dot
+ * was a sixth shape doing a job five already did.
+ *
+ * The choice is marked by a rule drawn UNDER the bar, not by a tick inside it —
+ * a tick on a coloured ground is the one mark this app reserves for "done".
  */
 import { RING } from "../../components/form";
 import { COLORS } from "./colors";
@@ -19,12 +23,12 @@ export function ColorPicker({
 }) {
   return (
     <fieldset>
-      <legend className="text-meta text-muted pb-1.5">Colour</legend>
+      <legend className="label text-muted pb-2.5">Colour</legend>
       <div className="flex gap-2">
         {COLORS.map(({ token, name }) => (
           <label
             key={token}
-            className={`grid h-11 w-11 cursor-pointer place-items-center rounded-full ${RING}`}
+            className={`relative grid h-11 w-11 cursor-pointer place-items-center ${RING}`}
           >
             <input
               type="radio"
@@ -36,13 +40,12 @@ export function ColorPicker({
             />
             <span
               aria-hidden="true"
-              className="h-6 w-6 rounded-full transition-shadow"
-              style={{
-                background: `var(--c-${token})`,
-                boxShadow:
-                  value === token ? "0 0 0 2px var(--c-canvas), 0 0 0 4px var(--c-ink)" : "none",
-              }}
+              className="h-6 w-[5px]"
+              style={{ background: `var(--c-${token})` }}
             />
+            {value === token && (
+              <span aria-hidden="true" className="bg-ink absolute inset-x-1.5 bottom-1 h-0.5" />
+            )}
           </label>
         ))}
       </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 
+import { FIELD, PRIMARY } from "../components/form";
 import { ApiError } from "../lib/api-client";
 import { useLogin } from "../features/auth/queries";
 
@@ -60,11 +61,11 @@ export default function Login() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-sm flex-col justify-center px-6 py-12">
-      <h1 className="font-serif text-date tracking-[-0.015em]">Habit tracker</h1>
+      <h1 className="font-serif text-title tracking-[-0.02em]">Habit tracker</h1>
       <p className="text-muted mt-1">Sign in to pick up where you left off.</p>
 
       <form onSubmit={submit} className="mt-8">
-        <label htmlFor="password" className="text-meta text-muted block">
+        <label htmlFor="password" className="label text-muted block">
           Password
         </label>
         <input
@@ -76,13 +77,13 @@ export default function Login() {
           onChange={(event) => setPassword(event.target.value)}
           aria-describedby={message ? "signin-message" : undefined}
           aria-invalid={login.isError || undefined}
-          className="border-line-strong bg-surface text-field focus:border-ink mt-1.5 min-h-12 w-full rounded-lg border px-3.5 outline-none"
+          className={`${FIELD} mt-1`}
         />
 
         <button
           type="submit"
           disabled={login.isPending || !!lockedFor || !password}
-          className="bg-ink text-canvas mt-4 min-h-12 w-full rounded-lg font-semibold disabled:opacity-40"
+          className={`${PRIMARY} mt-7`}
         >
           {login.isPending ? "Signing in…" : "Sign in"}
         </button>

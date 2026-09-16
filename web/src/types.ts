@@ -58,12 +58,24 @@ export interface Schedule {
   schedule_days: Weekday[] | null;
   /** Set only when schedule_kind is "weekly". */
   weekly_target: number | null;
+  /**
+   * The amount asked for on one occasion, in the habit's `unit`. Null in three
+   * different situations and they are not the same: the habit is binary, the
+   * habit is measured but aims at nothing, or this version is a pause — a pause
+   * asks for nothing at all.
+   *
+   * TRAP: unrelated to `weekly_target`, despite the name. That one counts
+   * occasions and this one measures each of them: three times a week, five
+   * kilometres each. They can both be set on the same version.
+   */
+  target_value: number | null;
 }
 
 /** The schedule half of a create or change request. */
 export type ScheduleInput =
-  | { schedule_kind: "fixed"; schedule_days: Weekday[] }
-  | { schedule_kind: "weekly"; weekly_target: number }
+  | { schedule_kind: "fixed"; schedule_days: Weekday[]; target_value?: number | null }
+  | { schedule_kind: "weekly"; weekly_target: number; target_value?: number | null }
+  // No target: the server's paused branch does not accept one and would drop it.
   | { schedule_kind: "paused" };
 
 /**
@@ -85,9 +97,74 @@ export interface Habit {
   sort_order: number;
   start_date: IsoDate;
   archived_on: IsoDate | null;
+  /**
+   * The measured unit ("km", "pages", "reps"), or null.
+   *
+   * NOT NULL is the only marker that a habit is measured at all — never the
+   * target, which lives on the schedule version and is absent during a pause.
+   * A paused quantity habit is still a quantity habit.
+   */
+  unit: string | null;
+  /**
+   * Whether the unit can still be changed. The server's answer, and not
+   * derivable here: it depends on whether any log in the habit's whole history
+   * carries a value. Never compute a substitute — the server refuses the change
+   * either way, and a guess would either offer a field that cannot save or hide
+   * one that could.
+   */
+  unit_locked: boolean;
   schedule: Schedule | null;
   /** Set only while `schedule.schedule_kind` is "paused". */
   resumes_to: ResumeSchedule;
+  /**
+   * The nearest version dated after today, or null. `schedule` above stays the
+   * one in force now — these are reported side by side, never one instead of
+   * the other, because a change that has been decided and a change that is in
+   * force are different claims.
+   */
+  next_schedule: Schedule | null;
+}
+
+/**
+ * One written day of one habit. `note` is never null here — the query that
+ * returns these asks only for rows that have one.
+ */
+export interface HistoryNote {
+  date: IsoDate;
+  status: LogStatus;
+  value: number | null;
+  note: string;
+}
+
+/**
+ * GET /api/habits/:id/history — one habit's whole life.
+ *
+ * `cells` is the same nine-verdict encoding the grid uses (decode it with CELL
+ * in features/habits/verdict.ts), running whole Monday-to-Sunday weeks from the
+ * habit's start to the last day it was alive for.
+ *
+ * `versions` is every schedule this habit has ever had, oldest first. That is a
+ * fact about the habit, not a reading of it — the append-only history is what
+ * lets a past week keep the meaning it was lived under.
+ *
+ * Deliberately absent, and to stay absent: a longest streak, a best month, a
+ * record of any kind. A count says what happened; a maximum is a high score in
+ * a game with one player, and a screen carrying one turns "do not break the
+ * record" into a reason not to rest.
+ */
+export interface HistoryPayload {
+  habit: Habit;
+  /** The server's today, in APP_TIMEZONE. Never use the browser's clock. */
+  today: IsoDate;
+  start: IsoDate;
+  end: IsoDate;
+  weeks: number;
+  cells: string;
+  versions: Schedule[];
+  /** One page, newest first. */
+  notes: HistoryNote[];
+  /** The cursor for the page before this one, or null at the end of the record. */
+  next_before: IsoDate | null;
 }
 
 export interface Task {
@@ -157,6 +234,19 @@ export interface DayHabit {
   paused: boolean;
   /** Set only while `paused`. See ResumeSchedule. */
   resumes_to: ResumeSchedule;
+  /** The habit's unit, or null for a binary habit. See Habit.unit. */
+  unit: string | null;
+  /**
+   * The target in force on THIS day, not today's — so a day lived under a 5 km
+   * target keeps saying 5 after the target becomes 10. Null means nothing was
+   * being aimed at on this day, which a paused day always is.
+   */
+  target_value: number | null;
+  /**
+   * What was measured. Null on a done day is a real answer — done, and not
+   * measured — and never means the log is incomplete.
+   */
+  value: number | null;
   status: LogStatus | null;
   note: string | null;
   verdict: Verdict;
@@ -240,6 +330,8 @@ export interface ReviewHabit {
   unlogged: number;
   paused: number;
   bonus: number;
+  /** The habit's unit, or null for a binary habit. See Habit.unit. */
+  unit: string | null;
   /**
    * 0..1, or null when nothing was ever asked — which is not the same as
    * nothing being done, so it must never render as 0%.
@@ -261,7 +353,39 @@ export interface ReviewHabit {
    * lib/streaks.js), not an accident: a windowed read that measured to today
    * would walk over days it never loaded and report a broken streak.
    */
+  /**
+   * How close the measured sessions came to the target, 0..1, and how many of
+   * them there were.
+   *
+   * A different question from `consistency`, and never a substitute for it:
+   * consistency asks whether you showed up as often as you said you would, this
+   * asks how close you got when you did. A habit can honestly be 100% on one and
+   * 60% on the other, and both belong on screen.
+   *
+   * TRAP: `attainment_of` is the number of measured sessions, not the number of
+   * done days — a done day with no value is a full occurrence and not a sample.
+   * A rate over two sessions and a rate over twenty are different claims, so
+   * never show the percentage without it.
+   *
+   * Null on every binary habit, and on a quantity habit whose sessions were
+   * never measured. Null is not zero and must not render as 0%.
+   */
+  attainment: number | null;
+  attainment_of: number;
   current_streak: number;
+  /**
+   * TRAP: on the payload, and never rendered — the same standing as `done_of`
+   * above, for a different reason.
+   *
+   * The product may state what happened; it may not frame a history as records
+   * to beat. A "best" is a high score in a game with one player, and a screen
+   * carrying one makes resting cost something in an app whose scoring model
+   * exists to make rest free. Counts, states and rates are facts and all stay;
+   * a maximum is not one of them.
+   *
+   * It is still reported because the server computes it honestly and the export
+   * is the user's data. Nothing in the interface reads it.
+   */
   longest_streak: number;
 }
 

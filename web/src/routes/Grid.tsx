@@ -1,343 +1,222 @@
 /**
- * The consistency grid — the artifact this product is built around.
+ * Pattern — the consistency sheet, and the artifact this product is built
+ * around.
  *
- * One block per habit, weeks running left to right and weekdays top to bottom,
- * so a gap in a row is a week that went wrong and a gap in a column is a day of
- * the week that never works. That second reading is the one a list of streaks
- * cannot give you, and it is the reason this screen exists.
+ * One sheet of pre-ruled chart paper per habit, weeks running left to right and
+ * weekdays top to bottom, so a gap in a row is a week that went wrong and a gap
+ * in a column is a day of the week that never works. That second reading is the
+ * one a list of streaks cannot give you, and it is the reason this screen
+ * exists.
  *
  * GET /api/grid packs a day into a single character, so a year of one habit is
  * a 364-character string. Nothing here recomputes a score: the cells arrive
- * decided, and the counts under each name are tallies of them, never a rate.
+ * decided, and the counts beside each name are tallies of them, never a rate.
  * Consistency is a real calculation with real rules — skipped days leave the
- * denominator, paused days never enter it — and it belongs to /review.
+ * denominator, paused days never enter it — and it belongs to /review. That is
+ * also why this screen is headed "Pattern": naming it Consistency put a second
+ * name on a number that is computed one tab over, under different rules.
+ *
+ * ONE scroller for every block, not one each. Seven independent scrollers meant
+ * seven rows that could be parked on seven different weeks, so a column no
+ * longer meant a date and the vertical reading above was quietly wrong.
  */
-import { Fragment, useEffect, useMemo, useRef, type CSSProperties, type MouseEvent } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import type { MouseEvent } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
 
 import { Choice } from "../components/Choice";
 import { ErrorBox } from "../components/ErrorBox";
+import { Chevron } from "../components/icons";
 import { Skeleton } from "../components/Skeleton";
-import { CELL, tally, VERDICT_LABEL } from "../features/habits/verdict";
+import { Legend } from "../features/habits/Legend";
+import { Sheet } from "../features/habits/Sheet";
+import { useParkedScroller } from "../features/habits/sheet-view";
+import { tally } from "../features/habits/verdict";
 import { useGrid } from "../features/overview/queries";
-import {
-  addDays,
-  formatDateLong,
-  formatDateShort,
-  formatMonthShort,
-  formatWeekday,
-} from "../lib/dates";
-import type { GridHabit, GridPayload, IsoDate, Verdict } from "../types";
+import { formatDateShort } from "../lib/dates";
+import type { GridHabit, GridPayload } from "../types";
 
+/**
+ * Each range draws at its own cell size, and the sizes are not a taste: 26
+ * weeks at 11px is the last width at which both the weekday axis and the dotted
+ * "not logged" ring still resolve, and 26 columns of it is exactly the 358px a
+ * 390px phone has.
+ *
+ * `wide` is the year, and it is a desktop range. A year of columns on a phone
+ * puts the cell at 6px, where the axis becomes an overlapping smear and the
+ * dotted ring degrades into texture — the reading the sheet exists for stops
+ * working before the layout does. Rather than ship a range that photographs
+ * well and says nothing, the chip is hidden below `md`, where the cell gets
+ * 11px and both readings survive.
+ *
+ * The year used to run at cell 12 / gap 1, and the gap is why it moved to
+ * 11 / 2: the channel ruling lives IN the gap, and at 1px there is nowhere to
+ * put it. Without the ruling the year would be the one range with no carrier
+ * for alive, paused or inactive — a second vocabulary on the same screen. The
+ * sheet is 4px wider than it was.
+ */
 const RANGES = [
-  { weeks: 4, label: "4w", title: "Last 4 weeks" },
-  { weeks: 12, label: "12w", title: "Last 12 weeks" },
-  { weeks: 26, label: "26w", title: "Last 26 weeks" },
-  { weeks: 52, label: "1y", title: "Last year" },
+  { weeks: 4, label: "4w", title: "Last 4 weeks", cell: 26, gap: 3, wide: false },
+  { weeks: 12, label: "12w", title: "Last 12 weeks", cell: 17, gap: 2, wide: false },
+  { weeks: 26, label: "26w", title: "Last 26 weeks", cell: 11, gap: 2, wide: false },
+  { weeks: 52, label: "1y", title: "Last year", cell: 11, gap: 2, wide: true },
 ];
 
 const DEFAULT_WEEKS = 12;
-const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6];
 
-/**
- * Seven looks for nine verdicts, and both collapses are deliberate.
- *
- * Paused and unscheduled draw the same, because the grid asks whether the day
- * was kept and both answer "nothing was asked of you" — the difference is still
- * in the cell's tooltip, where a reader who cares can find it. Inactive and
- * future get no mark at all: there is nothing to say about a day a habit did
- * not exist for, or has not reached yet.
- *
- * Fill and shape carry the state, never hue — a habit's colour identifies the
- * habit. Missed is the one warm mark and it is an outline, not a block of red.
- */
-function paint(verdict: Verdict, tint: string): CSSProperties {
-  switch (verdict) {
-    case "done":
-      return { background: tint };
-    case "bonus":
-      return { background: `color-mix(in srgb, ${tint} 40%, transparent)` };
-    case "skipped":
-      return { background: "var(--c-line)" };
-    case "missed":
-      return {
-        background: `color-mix(in srgb, var(--c-warn) 14%, transparent)`,
-        boxShadow: "inset 0 0 0 1.5px var(--c-warn)",
-      };
-    case "unlogged":
-      return { boxShadow: "inset 0 0 0 1.5px var(--c-line-strong)" };
-    case "paused":
-    case "unscheduled":
-      return { background: "var(--c-surface)" };
-    default:
-      return {};
-  }
-}
-
-/** The dash on a skipped cell, drawn rather than iconed so it survives a 10px cell. */
-const SkipMark = () => (
-  <span aria-hidden="true" className="bg-muted block h-[1.5px] w-1/2 rounded-full" />
-);
-
-// --- the legend ------------------------------------------------------------
-
-const LEGEND: { verdict: Verdict; label: string }[] = [
-  { verdict: "done", label: "Done" },
-  { verdict: "bonus", label: "Extra" },
-  { verdict: "skipped", label: "Skipped" },
-  { verdict: "missed", label: "Missed" },
-  { verdict: "unlogged", label: "Not logged" },
-  { verdict: "unscheduled", label: "Nothing asked" },
-];
-
-/** Only the marks actually on screen. A legend for states nobody has is noise. */
-function Legend({ habits }: { habits: GridHabit[] }) {
-  const present = useMemo(() => {
-    const seen = new Set<Verdict>();
-    for (const habit of habits) {
-      for (const char of habit.cells) {
-        const verdict = CELL[char];
-        if (verdict) seen.add(verdict);
-      }
-    }
-    if (seen.has("paused")) seen.add("unscheduled");
-    return seen;
-  }, [habits]);
-
-  const shown = LEGEND.filter((item) => present.has(item.verdict));
-  if (shown.length === 0) return null;
-
-  return (
-    <ul className="text-micro text-muted flex flex-wrap items-center gap-x-4 gap-y-2">
-      {shown.map((item) => (
-        <li key={item.verdict} className="flex items-center gap-1.5">
-          <span
-            aria-hidden="true"
-            className="grid h-4 w-4 shrink-0 place-items-center rounded-[3px]"
-            // chart-1 stands in for "a habit's colour"; the shape is the part
-            // the legend is actually teaching.
-            style={paint(item.verdict, "var(--c-chart-1)")}
-          >
-            {item.verdict === "skipped" && <SkipMark />}
-          </span>
-          {item.label}
-        </li>
-      ))}
-    </ul>
-  );
-}
+/** Said in one place, because it is shown from two, at different widths. */
+const NO_HISTORY = "Longer ranges need more history.";
 
 // --- one habit -------------------------------------------------------------
 
 /**
  * What the row amounts to, in counts. Bonus days are counted as done because
- * they were done — the day simply was not asked for, which the grid already
+ * they were done — the day simply was not asked for, which the sheet already
  * shows by drawing them lighter.
+ *
+ * This line is the sheet's TEXT ALTERNATIVE. The drawing below it is
+ * aria-hidden, so if this stops naming every state present, the screen stops
+ * existing for a screen reader and still looks perfect.
  */
-function summaryLine(habit: GridHabit, today: IsoDate): string {
+function summaryLine(habit: GridHabit): string {
   const counts = tally(habit.cells);
   const parts: string[] = [];
-
-  if (habit.weeks) {
-    /*
-     * A week that has not been fully lived is provisional: it can be satisfied,
-     * but it can never fail. The payload reports met=false for the week that
-     * started this morning exactly as it does for one that genuinely fell
-     * short, so counting every week would report today's week as a miss before
-     * it has happened — and quietly deflate the ratio every Monday.
-     */
-    const decided = habit.weeks.filter(
-      (week) => week.target !== null && (week.met || addDays(week.start, 6) < today),
-    );
-    if (decided.length > 0) {
-      const met = decided.filter((week) => week.met).length;
-      parts.push(`${met} of ${decided.length} week${decided.length === 1 ? "" : "s"} met`);
-    }
-  }
-
-  parts.push(`${(counts.done ?? 0) + (counts.bonus ?? 0)} done`);
+  const done = (counts.done ?? 0) + (counts.bonus ?? 0);
+  parts.push(`${done} done`);
   if (counts.missed) parts.push(`${counts.missed} missed`);
-  if (counts.unlogged) parts.push(`${counts.unlogged} not logged`);
   if (counts.skipped) parts.push(`${counts.skipped} skipped`);
-
+  if (counts.unlogged) parts.push(`${counts.unlogged} not logged`);
+  if (counts.paused) {
+    parts.push(`${counts.paused} ${counts.paused === 1 ? "day" : "days"} paused`);
+  }
   return parts.join(" · ");
 }
 
 function HabitBlock({
   habit,
   payload,
-  onPick,
+  range,
 }: {
   habit: GridHabit;
   payload: GridPayload;
-  onPick: (date: IsoDate) => void;
+  range: (typeof RANGES)[number];
 }) {
-  const { start, weeks, today } = payload;
   const tint = `var(--c-${habit.color_token})`;
 
-  /*
-   * Open on the most recent weeks, not the oldest.
-   *
-   * Past 26 weeks the row is wider than a phone and has to scroll, and a
-   * scroller starts at its left edge — which here is a year ago. The 1y range
-   * opened on last autumn with today 379px off the right of the screen, so the
-   * range that covers the most history was the one that showed none of the part
-   * you are living in. The grid reads left to right because that is how time
-   * runs; where it is *parked* is a different question, and the answer is now.
-   *
-   * Overshooting is fine: the browser clamps scrollLeft to the maximum, so this
-   * needs no measurement and cannot land half a column off.
-   */
-  const scroller = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = scroller.current;
-    if (el) el.scrollLeft = el.scrollWidth;
-  }, [start, weeks]);
-  const mondays = useMemo(
-    () => Array.from({ length: weeks }, (_, index) => addDays(start, index * 7)),
-    [start, weeks],
-  );
-
-  // Labelled only where the month turns over, and never on the first column,
-  // where a label would collide with the turn a week or two later.
-  const months = useMemo(
-    () =>
-      mondays.map((monday, index) => {
-        const previous = mondays[index - 1];
-        const month = formatMonthShort(monday);
-        return previous && formatMonthShort(previous) !== month ? month : null;
-      }),
-    [mondays],
-  );
-
-  // One listener on the grid rather than a link in all 364 cells: a cell is a
-  // 14px square, so it is a pointer shortcut to the day, not a control. The
-  // keyboard route to any day is the Day screen, which owns editing anyway.
-  const pick = (event: MouseEvent<HTMLDivElement>) => {
-    const date = (event.target as HTMLElement).closest<HTMLElement>("[data-date]")?.dataset.date;
-    if (date) onPick(date);
-  };
-
   return (
-    // min-w-0 is what makes the scroller below actually scroll. This section is
-    // a grid item, and a grid item's default min-width:auto refuses to shrink
-    // below its content's min-content width — 706px for a year of columns — so
-    // the whole page took that width and scrolled sideways instead, stranding
-    // the nav and the heading in the left 360px. 26w and 52w both did it.
-    <section className="min-w-0">
-      {/* Outside the scroller, so the name it belongs to cannot slide away from
-          the row when a year of columns has to scroll on a phone. */}
-      <header className="pb-2">
-        <h2 className="text-row flex items-center gap-2 font-medium">
+    <section className="pt-9 first:pt-0 lg:grid lg:grid-cols-[15rem_max-content] lg:items-start lg:gap-x-11 lg:pt-10">
+      {/*
+       * OUTSIDE the aria-hidden sheet below, and stuck to the left edge so a
+       * year of columns cannot slide the name away from the row it names.
+       *
+       * On a wide screen it moves BESIDE the sheet instead of above it, which
+       * is what makes every sheet start at the same x — and therefore what
+       * makes the pen at today run unbroken down the whole page.
+       */}
+      <header className="bg-canvas sticky left-0 z-[2] w-fit max-w-full pr-3 pb-2 lg:static lg:pt-8">
+        <h2 className="flex items-center gap-2.5">
           <span
             aria-hidden="true"
-            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            className="h-5 w-[3px] shrink-0"
             // A retired habit is still itself, just no longer asked for — the
-            // colour hollows out, as a paused one does on /habits.
+            // pen bar hollows out, as a paused habit's dot does on /habits.
             style={{ background: tint, opacity: habit.archived_on ? 0.35 : 1 }}
           />
-          <span className={habit.archived_on ? "text-muted" : undefined}>{habit.name}</span>
-          {/* Said here rather than left to the row simply stopping: a row that
-              ends with no explanation reads as a habit that was dropped. */}
-          {habit.archived_on && (
-            <span className="border-line text-micro text-muted shrink-0 rounded border px-1.5 py-0.5 font-normal">
-              Archived {formatDateShort(habit.archived_on)}
-            </span>
-          )}
+          {/* Where you notice a habit has gone strange is here, so this is
+              where the way into its whole history belongs. */}
+          <Link
+            to={`/habits/${habit.id}`}
+            className={`hover:text-ink font-serif text-name inline-flex min-h-9 items-center gap-1 ${
+              habit.archived_on ? "text-muted" : ""
+            }`}
+          >
+            {habit.name}
+            <Chevron className="text-muted" />
+          </Link>
         </h2>
-        <p className="text-meta text-muted tabular">{summaryLine(habit, today)}</p>
+        {/* Said here rather than left to the row simply stopping: a row that
+            ends with no explanation reads as a habit that was dropped. */}
+        {habit.archived_on && (
+          <p className="label text-muted mt-1.5">Archived {formatDateShort(habit.archived_on)}</p>
+        )}
+        <p className="label text-muted mt-2 max-w-[15rem] leading-[1.5]">{summaryLine(habit)}</p>
       </header>
 
-      {/* Columns shrink to fit the screen and stop at 10px; past that this
-          block scrolls on its own rather than squeezing a year into a phone. */}
-      <div ref={scroller} className="overflow-x-auto pb-1">
+      <Sheet
+        cells={habit.cells}
+        start={payload.start}
+        weeks={payload.weeks}
+        today={payload.today}
+        tint={tint}
+        cell={range.cell}
+        gap={range.gap}
+        archivedOn={habit.archived_on}
+      />
+
+      {/* A weekly habit's week is not told by its cells — three days out of
+          seven can be a perfect week or a failed one. The bar says which, and
+          it sits on its own rule below the seven channels rather than floating. */}
+      {habit.weeks && (
         <div
-          /*
-           * The grid is a picture. A screen reader should not be walked through
-           * 364 cells of it — the line above is its text alternative, and every
-           * day in it is reachable, readable and editable on the Day screen.
-           */
           aria-hidden="true"
-          onClick={pick}
-          className="grid w-full min-w-min gap-[3px]"
-          style={{ gridTemplateColumns: `auto repeat(${weeks}, minmax(10px, 28px))` }}
+          className="lg:col-start-2"
+          style={{
+            display: "grid",
+            gridTemplateColumns: `18px repeat(${payload.weeks}, ${range.cell}px)`,
+            gap: `${range.gap}px`,
+            width: "max-content",
+          }}
         >
           <span />
-          {mondays.map((monday, index) => (
-            <span key={monday} className="text-micro text-muted relative h-4">
-              {months[index] && (
-                <span className="absolute bottom-0 left-0 whitespace-nowrap">{months[index]}</span>
+          {habit.weeks.map((week) => (
+            <span
+              key={week.start}
+              className="mt-1.5 block h-[3px] self-center"
+              style={{ background: week.target ? "var(--c-tray)" : "transparent" }}
+            >
+              {week.target !== null && (
+                <span
+                  className="block h-full"
+                  style={{
+                    width: `${Math.min(1, week.done / week.target) * 100}%`,
+                    background: week.met ? tint : `color-mix(in srgb, ${tint} 45%, transparent)`,
+                  }}
+                />
               )}
             </span>
           ))}
-
-          {WEEKDAYS.map((row) => (
-            <Fragment key={row}>
-              <span className="text-micro text-muted self-center pr-1.5 leading-none">
-                {formatWeekday(addDays(start, row))}
-              </span>
-              {mondays.map((_monday, index) => {
-                const offset = index * 7 + row;
-                const date = addDays(start, offset);
-                const char = habit.cells[offset];
-                const verdict = (char ? CELL[char] : null) ?? "inactive";
-
-                return (
-                  <span
-                    key={date}
-                    data-date={date}
-                    title={`${formatDateLong(date)} — ${VERDICT_LABEL[verdict]}`}
-                    className="grid aspect-square cursor-pointer place-items-center rounded-[3px]"
-                    style={{
-                      ...paint(verdict, tint),
-                      ...(date === today
-                        ? { outline: "1px solid var(--c-line-strong)", outlineOffset: "1px" }
-                        : null),
-                    }}
-                  >
-                    {verdict === "skipped" && <SkipMark />}
-                  </span>
-                );
-              })}
-            </Fragment>
-          ))}
-
-          {/* A weekly habit's week is not told by its cells — three days out of
-            seven can be a perfect week or a failed one. The bar says which. */}
-          {habit.weeks && (
-            <>
-              <span />
-              {habit.weeks.map((week) => (
-                <span
-                  key={week.start}
-                  className="mt-1 block h-[3px] self-center rounded-full"
-                  style={{ background: week.target ? "var(--c-line)" : "transparent" }}
-                >
-                  {week.target !== null && (
-                    <span
-                      className="block h-full rounded-full"
-                      style={{
-                        width: `${Math.min(1, week.done / week.target) * 100}%`,
-                        background: week.met
-                          ? tint
-                          : `color-mix(in srgb, ${tint} 45%, transparent)`,
-                      }}
-                    />
-                  )}
-                </span>
-              ))}
-            </>
-          )}
         </div>
-      </div>
+      )}
     </section>
   );
 }
 
 // --- the screen ------------------------------------------------------------
 
+/**
+ * Leading weeks in which no habit existed at all.
+ *
+ * It speaks only about ranges LONGER than the one on screen, and that is all it
+ * can honestly speak about: if 26 weeks already opens on dead columns, a year
+ * shows the same record with more emptiness in front of it, so that chip is
+ * offered dimmed rather than promising a picture that does not exist. From a
+ * range with no dead columns nothing follows, and nothing is concluded.
+ */
+function deadLeadingWeeks(habits: GridHabit[], weeks: number): number {
+  let dead = 0;
+  for (let week = 0; week < weeks; week++) {
+    const base = week * 7;
+    const alive = habits.some((habit) => {
+      for (let day = 0; day < 7; day++) if (habit.cells[base + day] !== "-") return true;
+      return false;
+    });
+    if (alive) break;
+    dead++;
+  }
+  return dead;
+}
+
 const GridSkeleton = () => (
-  <div className="grid gap-8 pt-2">
+  <div className="grid gap-9 pt-2">
     {[0, 1, 2].map((block) => (
       <div key={block} className="grid gap-2">
         <Skeleton className="h-5 w-40" />
@@ -354,33 +233,88 @@ export default function Grid() {
   // The range lives in the URL so a reload, a back button and a shared link all
   // land on the same picture.
   const requested = Number(params.get("weeks"));
-  const weeks = RANGES.some((range) => range.weeks === requested) ? requested : DEFAULT_WEEKS;
+  const known = RANGES.find((item) => item.weeks === requested);
+  const range = known ?? RANGES.find((item) => item.weeks === DEFAULT_WEEKS)!;
+  const weeks = range.weeks;
 
   const query = useGrid(weeks);
   const data = query.data;
 
+  // One scroller for the whole page, keyed on the payload's own start and weeks
+  // rather than on the requested range — so while keepPreviousData holds the
+  // old sheet on screen this cannot fire against cells that are about to change.
+  const scroller = useParkedScroller([data?.start, data?.weeks, range.cell]);
+
+  // One listener for the whole sheet rather than a link in every cell: a cell
+  // is an 11px square, so it is a pointer shortcut to the day, not a control.
+  // The keyboard route to any day is the Day screen, which owns editing anyway.
+  const pick = (event: MouseEvent<HTMLDivElement>) => {
+    const date = (event.target as HTMLElement).closest<HTMLElement>("[data-date]")?.dataset.date;
+    if (date) navigate(`/day/${date}`);
+  };
+
+  const dead = data ? deadLeadingWeeks(data.habits, data.weeks) : 0;
+  // Split by whether the dimmed chip is one this width shows at all.
+  const shortDisabled = dead > 0 && RANGES.some((item) => !item.wide && item.weeks > weeks);
+  const wideDisabled = dead > 0 && RANGES.some((item) => item.wide && item.weeks > weeks);
+
   return (
-    <div className="mx-auto w-full max-w-[68rem] px-4 pb-20 sm:px-6 lg:px-8">
-      <header className="pt-5 pb-7 sm:pt-8">
-        <h1 className="font-serif text-date tracking-[-0.015em]">Consistency</h1>
-        <p className="text-meta text-muted tabular mt-1 min-h-[1.125rem]">
+    <div className="mx-auto w-full max-w-[84rem] px-4 pb-24 sm:px-6 lg:px-8">
+      <header className="pt-6 pb-8 sm:pt-10">
+        <p className="label text-muted">Sheet · {range.title.replace("Last ", "")}</p>
+        <h1 className="font-serif text-title mt-2 tracking-[-0.015em]">Pattern</h1>
+        <p className="font-mono text-meta text-muted mt-2 min-h-[1.125rem]">
           {data ? `${formatDateShort(data.start)} – ${formatDateShort(data.end)}` : ""}
         </p>
 
-        <div role="group" aria-label="Range" className="mt-4 grid max-w-xs grid-cols-4 gap-1.5">
-          {RANGES.map((range) => (
-            <Choice
-              key={range.weeks}
-              type="radio"
-              name="range"
-              checked={range.weeks === weeks}
-              onChange={() => setParams({ weeks: String(range.weeks) }, { replace: true })}
-              label={range.title}
-            >
-              {range.label}
-            </Choice>
-          ))}
+        <div role="group" aria-label="Range" className="mt-5 flex max-w-xs">
+          {RANGES.map((item) => {
+            // Longer than anything on record: see deadLeadingWeeks.
+            const empty = dead > 0 && item.weeks > weeks;
+            return (
+              <Choice
+                key={item.weeks}
+                type="radio"
+                name="range"
+                checked={item.weeks === weeks}
+                disabled={empty}
+                onChange={() => setParams({ weeks: String(item.weeks) }, { replace: true })}
+                // A dimmed control that will not say why is a control that
+                // looks broken. The reason rides on the label, so it reaches a
+                // screen reader as well as the note below reaches everyone else.
+                label={empty ? `${item.title} — no record goes back that far` : item.title}
+                /*
+                 * A year needs 52 columns, which is a desktop picture, so it is
+                 * offered on one — except when it is the range being shown,
+                 * which a link from a desktop can make true on a phone. A hidden
+                 * chip that is also the selected one leaves every chip looking
+                 * unselected.
+                 */
+                className={item.wide && item.weeks !== weeks ? "hidden md:flex" : ""}
+              >
+                {item.label}
+              </Choice>
+            );
+          })}
         </div>
+
+        {/*
+         * At most one line, and each one is tied to a control the reader can
+         * actually see.
+         *
+         * The year chip is hidden below `md`, so a phone showing "longer ranges
+         * need more history" would be explaining a dimmed control that is not on
+         * the screen — which is how a note meant to remove confusion adds some.
+         */}
+        {shortDisabled ? (
+          <p className="label text-muted mt-3">{NO_HISTORY}</p>
+        ) : wideDisabled ? (
+          <p className="label text-muted mt-3 hidden md:block">{NO_HISTORY}</p>
+        ) : (
+          <p className="label text-muted mt-3 md:hidden">
+            A full year fits on a wider screen; the squares would be too small to read here.
+          </p>
+        )}
       </header>
 
       {query.isError && !data ? (
@@ -389,9 +323,9 @@ export default function Grid() {
         <GridSkeleton />
       ) : data.habits.length === 0 ? (
         <section>
-          <p className="text-row">Nothing to show yet.</p>
-          <p className="text-muted mt-1 max-w-sm">
-            The grid fills in as you log days. Add a habit on the day screen and come back in a
+          <p className="font-serif text-name">Nothing to show yet.</p>
+          <p className="text-muted mt-2 max-w-sm">
+            The sheet fills in as you log days. Add a habit on the day screen and come back in a
             week.
           </p>
         </section>
@@ -399,20 +333,22 @@ export default function Grid() {
         <div
           className={`transition-opacity ${query.isPlaceholderData ? "opacity-50" : "opacity-100"}`}
         >
-          <div className="grid gap-9">
-            {data.habits.map((habit) => (
-              <HabitBlock
-                key={habit.id}
-                habit={habit}
-                payload={data}
-                onPick={(date) => navigate(`/day/${date}`)}
-              />
-            ))}
+          {/* Before the sheet, not after it. It used to sit under a page of
+              squares, where it was found — if at all — long after it was
+              needed. */}
+          <div className="border-baseline mb-7 border-b pb-5">
+            <Legend cells={data.habits.map((habit) => habit.cells).join("")} />
           </div>
 
-          <div className="border-line mt-9 border-t pt-5">
-            <Legend habits={data.habits} />
-            <p className="text-micro text-muted mt-3">Tap any square to open that day.</p>
+          {/* One scroller, one set of columns. Every block below is parked on
+              the same week as every other, which is what makes a column mean a
+              date — and what lets the pen at today line up down the page. */}
+          <div ref={scroller} onClick={pick} className="overflow-x-auto pb-1">
+            <div className="w-max min-w-full">
+              {data.habits.map((habit) => (
+                <HabitBlock key={habit.id} habit={habit} payload={data} range={range} />
+              ))}
+            </div>
           </div>
         </div>
       )}

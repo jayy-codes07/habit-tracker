@@ -93,7 +93,12 @@ The modules, and why they are grouped this way:
 
 - `habits/` owns habits, **schedule versions and logs too**. Neither has a life of its own — both
   are reached only through a habit and die with it — so splitting them would buy three routers and
-  a lot of cross-importing for nothing.
+  a lot of cross-importing for nothing. It also owns `GET /habits/:id/history`, which is a composed
+  read but not an `overview/` one: it joins no other service, and the only scoring in it is the
+  pure `dayVerdict` from `lib/`. It is the **one query that returns notes in bulk** (`loadNotes`),
+  paged by a `before=<date>` cursor rather than an offset — `habit_logs` is unique on
+  `(habit_id, date)`, so paging backwards is a scan of that index, and a page stays stable while
+  the history behind it is being edited.
 - `tasks/`, `journal/` — one table each.
 - `overview/` owns `/day`, `/grid` and `/review`. It owns **no tables**: it composes the other
   services and the pure functions in `src/lib/`, which is what keeps the scoring rules in one
@@ -211,12 +216,23 @@ live in constraints, with the reasoning in comments.
 - **A habit does not carry its schedule.** `habit_schedules` holds dated versions; the schedule in
   force on day D is the greatest `effective_from <= D`, and only when `D >= habits.start_date`.
   Editing a schedule **appends a version**, so past weeks keep the meaning they had when they were
-  lived. Pausing is a version too (`schedule_kind = 'paused'`, no scheduled days), which is why a
+  lived. A change of **scoring unit** — fixed to weekly or back — is the one edit that does not start
+  when it was asked to: `setSchedule` defers it to the **following Monday**, because fixed counts
+  days and weekly counts weeks, and a switch landing on a Thursday leaves a week that is neither a
+  complete fixed period nor a complete weekly one. Enforcing it once at the write is what keeps
+  every scoring read free of a special case for it, and the stored `effective_from` comes back in
+  the response so the client can say when the change starts. Everything else is immediate: a change
+  of days only renames them, a change of target is already governed by the week's first active day,
+  and pausing and resuming must take effect the moment they are asked for. Pausing is a version too (`schedule_kind = 'paused'`, no scheduled days), which is why a
   break reads as absence rather than failure: neutral in the grid, streaks pass through it, excluded
   from the consistency denominator. A paused version stores no days and no target, so **what a
   paused habit will resume to is not derivable from the version in force** — `resolveResumeSchedule()`
   walks back to the last version that asked for something, and `/habits` and `/day` both report it
-  as `resumes_to`. It exists because the client had to invent a schedule to resume on and invented
+  as `resumes_to`. Its forward-looking twin is `resolveNextSchedule()`, reported by `/habits` as
+  `next_schedule`: the nearest version dated **strictly after** today, or null. Both are reported
+  *alongside* `schedule`, never instead of it — a version that is in force, one that was
+  interrupted and one that is waiting are three different claims, and the interface has to show
+  more than one at a time. It exists because the client had to invent a schedule to resume on and invented
   every-day: resuming a Tue/Thu habit turned it into one that then failed five days a week. Never
   guess this on the client. It is null when a habit was paused from its first version, and also
   when the pause landed on the same `effective_from` as the schedule it replaced — `setSchedule`'s
@@ -276,6 +292,13 @@ counts weeks, and unifying them would mean inventing a period abstraction for ex
 - **Consistency is separate from the streak** and always reported alongside it. Skipped days leave
   the denominator entirely; paused days never enter it; a weekly week contributes its target with
   done days capped at it, so the rate cannot exceed 100%.
+- `consistency()` has two loops and they must stay **disjoint**, or one calendar day is charged
+  twice. The week loop therefore admits a week only when **no day in it is fixed-governed** — a week
+  a weekly-to-fixed change split used to be billed as its weekly target *and* as the fixed days
+  inside the same seven days. The Monday deferral above stops such a week being written at all; the
+  guard is what keeps the sum honest for the rows written before it existed. The streaks are
+  deliberately *not* this strict — they read a split week as the week it began as, because an edit
+  must never cost a run.
 
 ### Auth
 
@@ -344,8 +367,13 @@ read with one map:
   domain UI it has. `habits/` owns **schedules and logs too**, as the server's module does, which
   is why `useSetLog` lives there and not under `overview/`. `overview/` owns the composed screen
   reads — `/day`, `/grid` and `/review`, all three implemented — and no tables.
-- `routes/` — one file per URL: `Day`, `Grid`, `Review`, `Habits`, `Tasks`, `Login`. Route
-  components compose features; features never import routes.
+- `routes/` — one file per URL: `Day`, `Grid`, `Review`, `Habits`, `HabitHistory`, `Tasks`,
+  `Login`. Route components compose features; features never import routes. `HabitHistory` is
+  `/habits/:id`, one level below the list and the only screen about a single habit over its whole
+  life rather than about a day, a week or a month — reached from a row on `/habits` and from a
+  habit's name on `/grid`. It is also where the habit **editor** is opened from, so that changing a
+  habit happens on the screen that shows what you would be changing; `/habits` rows no longer open
+  it directly.
 - `components/` — domain-free UI only (`Dialog`, `Choice`, `ErrorBox`, `Skeleton`, `icons`, and
   `form.ts`, the shared control classes). Anything that knows what a habit is belongs in `features/`.
 - `lib/` — `api-client.ts` (the transport: `request`, `ApiError`; endpoints live with their
@@ -382,6 +410,26 @@ Four payload traps, all handled in
   habit for this reason.
 - **`done` and `done_of` do not pair up** (see the review payload). `done_of` is never rendered.
 
+**The product states what happened; it does not keep records.** Counts, states and rates are facts
+and all belong on screen — done, missed, skipped, not logged, paused days, consistency, attainment,
+and the *current* streak, which says where you are. A **maximum** is not one of them: `longest_streak`
+is on the review payload and is rendered nowhere, the habit history page reports no best month and
+no personal record, and none should be added. A best is a high score in a game with one player, and
+the moment a screen carries one, deciding to rest costs something — in an app whose entire scoring
+model (skipped days leave the denominator, paused days never enter it, a pause passes through a
+streak) exists to make rest cost nothing.
+
+**A schedule change does not always start today, and the editor must say so.** Moving a habit
+between fixed and weekly is stored effective the following Monday (see `setSchedule`), so
+`HabitEditor` stays open on that one save and shows the `effective_from` the server returned.
+Closing regardless dropped the person back on a list still resolving the schedule as of today —
+a successful save that looked exactly like a failed one. Which saves *may* be deferred is decided
+from the two schedule kinds, never from a date: the client may not consult its own clock to guess
+one, and the date itself is always the `effective_from` the server returned. Once the dialog is
+closed the same change is carried by `next_schedule` on the habit row, which is what makes it
+survive a reload — the editor's panel renders the stored version if it has one and the just-saved
+one otherwise, so there is one statement of it and it does not flicker in behind the refetch.
+
 **Optimistic updates patch `status` only.** `verdict` and `streak` cannot be computed honestly on
 the client — a streak needs history the client does not hold, and a paused day is indistinguishable
 from an unscheduled one in the payload — so they are left to correct themselves on settle, and the
@@ -391,6 +439,16 @@ Invalidation is blunt and should stay that way: a log written last March can cha
 this month's review and a grid cell a year back, so log mutations invalidate `["day"]`, `["grid"]`
 and `["review"]` by prefix and everything else calls `invalidateAll`. Prefix invalidation is free —
 TanStack only refetches queries that are mounted.
+
+**A day's verdict is drawn by shape, never by two similar fills.** `paint()` in
+[features/habits/verdict.ts](web/src/features/habits/verdict.ts) is the single implementation,
+shared by the grid and by a habit's spine on its history page. Every day a habit was *alive* for
+gets a tray (`--c-tray`); a bare tray means nothing was asked of you, `missed` is a **solid** ring
+on it and `unlogged` a **dotted** one. `--c-tray` exists as its own token because `--c-line` sat
+1.03:1 from the skipped fill, which made "skipped" and "nothing was asked" the same square. The
+vocabulary was verified in greyscale in both themes down to an 11px cell, which is where the dotted
+ring stops resolving — and that floor, not a layout limit, is why `/grid` offers no one-year range
+below `md`.
 
 Colour tokens are applied as `var(--c-${habit.color_token})`, not through a token-to-class map.
 Note the `--c-` prefix: `@theme inline` in `index.css` does not emit `--color-*` custom properties,

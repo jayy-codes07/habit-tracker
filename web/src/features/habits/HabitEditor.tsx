@@ -24,14 +24,15 @@ import { Dialog } from "../../components/Dialog";
 import { FIELD, PRIMARY, QUIET } from "../../components/form";
 import { ColorPicker } from "./ColorPicker";
 import { SchedulePicker } from "./SchedulePicker";
-import { draftOf, isDraftValid, matchesSchedule, toScheduleInput } from "./schedule";
+import { draftFor, draftOf, isDraftValid, matchesSchedule, toScheduleInput } from "./schedule";
 import { useDeleteHabit, usePatchHabit, useSetSchedule } from "./queries";
+import { scheduleWords } from "./verdict";
 import { ApiError } from "../../lib/api-client";
-import { formatDateShort } from "../../lib/dates";
-import type { ColorToken, Habit } from "../../types";
+import { formatDateLong, formatDateShort } from "../../lib/dates";
+import type { ColorToken, Habit, Schedule } from "../../types";
 
 const DANGER =
-  "border-warn text-warn hover:bg-warn/10 min-h-12 w-full rounded-lg border px-4 font-medium disabled:opacity-40";
+  "border-warn text-warn hover:bg-warn/10 min-h-12 w-full border px-4 font-medium disabled:opacity-40";
 
 export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => void }) {
   const current = habit.schedule;
@@ -39,12 +40,15 @@ export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => v
 
   const [name, setName] = useState(habit.name);
   const [color, setColor] = useState<ColorToken>(habit.color_token);
+  const [unit, setUnit] = useState(habit.unit ?? "");
   const [paused, setPaused] = useState(wasPaused);
   // While paused, `current` is the paused version and says nothing about days or
   // target — `resumes_to` is the version the pause interrupted, and is what
   // unticking Paused must restore. Guessing here turned Tue/Thu into every day.
   const [draft, setDraft] = useState(draftOf(wasPaused ? habit.resumes_to : current));
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // The version the server actually stored, held only when it dated it forward.
+  const [saved, setSaved] = useState<Schedule | null>(null);
 
   const patch = usePatchHabit();
   const schedule = useSetSchedule();
@@ -53,9 +57,74 @@ export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => v
   const archivedOn = habit.archived_on;
   const trimmed = name.trim();
 
-  const detailsChanged = trimmed !== habit.name || color !== habit.color_token;
-  const scheduleChanged = paused ? !wasPaused : wasPaused || !matchesSchedule(current, draft);
+  /*
+   * The server's answer, never a guess. Whether the unit is still changeable
+   * depends on whether any log in the habit's whole history carries a value,
+   * which this screen has no way to know — and the server refuses the change
+   * regardless, so a wrong guess here would either offer a field that cannot
+   * save or hide one that could.
+   */
+  const unitLocked = habit.unit_locked;
+  const trimmedUnit = unit.trim();
+  const nextUnit = trimmedUnit === "" ? null : trimmedUnit;
+  const unitChanged = !unitLocked && nextUnit !== habit.unit;
+
+  /*
+   * Everything below reads the schedule as it will be saved, which depends on
+   * the unit *being typed* rather than the one last stored: deleting the unit
+   * takes the target with it, and typing one makes a target possible at once.
+   * Nothing here is a second source of truth — the draft is still the draft,
+   * and this only refuses to carry an amount the habit could not express.
+   */
+  const saving = draftFor(draft, nextUnit);
+  /*
+   * ...and it is compared against what the current version will say once that
+   * unit change lands, because clearing the unit clears its target in the same
+   * statement on the server. Without this, dropping the unit would also read as
+   * a schedule change and append a version recording no decision anybody made.
+   */
+  const currentAfterUnit =
+    nextUnit === null && current ? { ...current, target_value: null } : current;
+
+  const detailsChanged = trimmed !== habit.name || color !== habit.color_token || unitChanged;
+  const scheduleChanged = paused
+    ? !wasPaused
+    : wasPaused || !matchesSchedule(currentAfterUnit, saving);
   const changed = detailsChanged || scheduleChanged;
+
+  /*
+   * The one change the server does not start when it is asked to: switching
+   * between certain days and times a week moves to the following Monday,
+   * because a week cannot be scored half as a set of named days and half as a
+   * count over seven of them.
+   *
+   * Which saves *may* be deferred is knowable here without a clock — it is a
+   * property of the two kinds, not of the date — and that is the whole test
+   * this needs. Whether one actually was deferred is not knowable: /habits
+   * resolves a schedule as of today and carries no version dated later, and the
+   * client must never decide for itself what day it is. So the answer comes
+   * from the server, as the effective_from it returns, and is simply shown.
+   * On a Monday that date is today, which reads as true rather than as news.
+   *
+   * Pausing and resuming are never deferred — neither is a scoring kind — and
+   * neither is a change of days, of weekly target, or of the amount asked for
+   * each time.
+   */
+  /*
+   * The change that is decided but not yet in force: the server's, from the
+   * payload, or the one just stored — which arrives a beat before the refetched
+   * list carries it, so preferring it keeps the panel from flickering in.
+   */
+  const upcoming = saved ?? habit.next_schedule;
+
+  /*
+   * Renamed from `unitChanged`. "Unit" now means the thing a habit is measured
+   * in, and this has never been about that: it is a change of *scoring kind*,
+   * certain days becoming times a week or back. Two unrelated meanings of one
+   * word in one file is how the wrong one gets read at three in the morning.
+   */
+  const kindChanged =
+    !paused && !wasPaused && current !== null && current.schedule_kind !== saving.kind;
 
   const busy = patch.isPending || schedule.isPending || remove.isPending;
 
@@ -82,14 +151,25 @@ export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => v
           patch: {
             ...(trimmed !== habit.name ? { name: trimmed } : {}),
             ...(color !== habit.color_token ? { color_token: color } : {}),
+            // Only when it actually changed. The server patches by key
+            // presence, so sending it every time would turn a rename into a
+            // unit write — which a habit that has measured anything refuses.
+            ...(unitChanged ? { unit: nextUnit } : {}),
           },
         });
       }
       if (scheduleChanged) {
-        await schedule.mutateAsync({
+        const stored = await schedule.mutateAsync({
           id: habit.id,
-          schedule: paused ? { schedule_kind: "paused" } : toScheduleInput(draft),
+          schedule: paused ? { schedule_kind: "paused" } : toScheduleInput(saving),
         });
+        // Staying open is the point: closing on a change that has not started
+        // yet drops the person back on a list still showing the old schedule,
+        // which is what made a successful save look like a failed one.
+        if (kindChanged) {
+          setSaved(stored.schedule);
+          return;
+        }
       }
       onClose();
     } catch {
@@ -104,7 +184,7 @@ export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => v
     <Dialog open onClose={onClose} title={habit.name}>
       <div className="grid gap-5">
         <div>
-          <label htmlFor="edit-name" className="text-meta text-muted block pb-1.5">
+          <label htmlFor="edit-name" className="label text-muted block pb-2.5">
             Name
           </label>
           <input
@@ -118,14 +198,48 @@ export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => v
 
         <ColorPicker value={color} onChange={setColor} />
 
+        <div>
+          <label htmlFor="edit-unit" className="label text-muted block pb-2.5">
+            Measured in (optional)
+          </label>
+          <input
+            id="edit-unit"
+            value={unit}
+            onChange={(event) => setUnit(event.target.value)}
+            maxLength={20}
+            disabled={unitLocked}
+            placeholder="km, pages, glasses…"
+            aria-describedby="edit-unit-hint"
+            className={`${FIELD} disabled:opacity-50`}
+          />
+          <p id="edit-unit-hint" className="text-meta text-muted mt-1.5">
+            {unitLocked
+              ? // Not a refusal to be argued with: every number already recorded
+                // is in this unit and no row remembers which, so changing it
+                // would quietly re-mean all of them. Say what to do instead.
+                //
+                // Both kinds of number are named, because the server locks on
+                // either and does not say which here — a target is history too,
+                // and a habit can be frozen by one before it has ever been
+                // logged. Working out which applies would mean recomputing the
+                // server's rule on the client, which is the thing unit_locked
+                // exists to avoid.
+                `This habit has days measured in ${habit.unit}, or targets set in it, so the unit is now fixed — changing it would silently re-mean every number behind it. To measure in something else, archive this habit and start a new one.`
+              : "Leave this blank to just tick the day off. Adding a unit lets you record how much, which is reported on its own and never changes a streak."}
+          </p>
+        </div>
+
         {/* Disabled natively rather than hidden, so a paused habit still shows
             the schedule the checkbox below will resume it on. Choice dims its
             own disabled controls — do not dim the fieldset as well. */}
         <fieldset disabled={paused}>
-          <SchedulePicker draft={draft} onChange={setDraft} />
+          {/* `nextUnit`, not `habit.unit`: the target field has to appear the
+              moment a unit is typed and go the moment it is deleted, or the
+              two are only settable in two separate saves. */}
+          <SchedulePicker draft={saving} unit={nextUnit} onChange={setDraft} />
         </fieldset>
 
-        <label className="border-line-strong flex min-h-12 cursor-pointer items-center gap-3 rounded-lg border px-3.5 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2">
+        <label className="border-baseline flex min-h-12 cursor-pointer items-center gap-3 border px-3.5 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2">
           <input
             type="checkbox"
             checked={paused}
@@ -138,8 +252,37 @@ export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => v
         <p className="text-meta text-muted -mt-3">
           {paused
             ? "Nothing is being asked of you meanwhile: paused days stay out of your streak and out of your consistency. Untick to resume on the schedule above."
-            : "A schedule change takes effect today. Past weeks keep the schedule they were lived under."}
+            : // `kindChanged`, not `unitChanged`. This sentence is about the
+              // scoring kind — certain days becoming times a week — and reading
+              // it off the measured unit made it say the wrong thing twice:
+              // it appeared when the unit was edited, where no deferral happens,
+              // and it was missing on the one change that is actually deferred,
+              // which then promised "takes effect today" and stored next Monday.
+              kindChanged
+              ? "Moving between certain days and times a week starts on a Monday: a week is scored either as days or as a count, never half of each. The week you are in keeps the schedule it began with."
+              : "A schedule change takes effect today. Past weeks keep the schedule they were lived under."}
         </p>
+
+        {/* Announced as a status so a save that starts later is spoken as well
+            as shown; present on open too, where a live region stays silent. */}
+        {upcoming && (
+          <div role="status" className="border-grid bg-raised text-meta border p-3">
+            <p className="text-muted">{saved ? "Saved. Upcoming change" : "Upcoming change"}</p>
+            <p className="font-medium">
+              {scheduleWords(
+                upcoming.schedule_kind,
+                upcoming.schedule_days,
+                upcoming.weekly_target,
+                upcoming.target_value,
+                nextUnit,
+              )}
+            </p>
+            <p className="text-muted">
+              Starts {formatDateLong(upcoming.effective_from)}. Until then this habit keeps the
+              schedule it has now, and the days already behind it keep theirs.
+            </p>
+          </div>
+        )}
 
         {saveError && (
           <p role="alert" className="text-warn text-meta">
@@ -151,17 +294,19 @@ export function HabitEditor({ habit, onClose }: { habit: Habit; onClose: () => v
           <button
             type="button"
             className={PRIMARY}
-            disabled={!trimmed || !isDraftValid(draft) || !changed || busy}
-            onClick={() => void save()}
+            disabled={!saved && (!trimmed || !isDraftValid(saving) || !changed || busy)}
+            onClick={() => (saved ? onClose() : void save())}
           >
-            {busy ? "Saving…" : changed ? "Save changes" : "Saved"}
+            {saved ? "Done" : busy ? "Saving…" : changed ? "Save changes" : "Saved"}
           </button>
-          <button type="button" className={QUIET} onClick={onClose}>
-            Cancel
-          </button>
+          {!saved && (
+            <button type="button" className={QUIET} onClick={onClose}>
+              Cancel
+            </button>
+          )}
         </div>
 
-        <div className="border-line grid gap-2 border-t pt-4">
+        <div className="border-grid grid gap-2 border-t pt-4">
           {archivedOn ? (
             <>
               <button

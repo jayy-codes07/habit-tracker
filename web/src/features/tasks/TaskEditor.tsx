@@ -55,7 +55,7 @@ export function TaskEditor({
     <Dialog open onClose={onClose} title={task.title}>
       <div className="grid gap-5">
         <div>
-          <label htmlFor="task-title" className="text-meta text-muted block pb-1.5">
+          <label htmlFor="task-title" className="label text-muted block pb-2.5">
             Task
           </label>
           <input
@@ -68,7 +68,7 @@ export function TaskEditor({
         </div>
 
         <div>
-          <label htmlFor="task-due" className="text-meta text-muted block pb-1.5">
+          <label htmlFor="task-due" className="label text-muted block pb-2.5">
             Due
           </label>
           <div className="flex gap-2">
@@ -83,7 +83,7 @@ export function TaskEditor({
               <button
                 type="button"
                 onClick={() => setDue("")}
-                className="border-line-strong hover:bg-raised text-meta min-h-12 shrink-0 rounded-lg border px-3 font-medium"
+                className="label min-h-12 shrink-0 px-2 underline decoration-[var(--c-baseline)] underline-offset-[6px]"
               >
                 Clear
               </button>
@@ -116,7 +116,7 @@ export function TaskEditor({
           </button>
         </div>
 
-        <div className="border-line grid gap-2 border-t pt-4">
+        <div className="border-grid grid gap-2 border-t pt-4">
           <button
             type="button"
             className={QUIET}

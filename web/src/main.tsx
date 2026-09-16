@@ -1,5 +1,12 @@
+// Three voices, three faces. The mono is the instrument's register and carries
+// every number in the app, which is why it is worth its own family rather than
+// tabular figures in the sans: a readout that is not monospaced is not a readout.
+// Latin subsets only, and only the weights actually used.
 import "@fontsource-variable/instrument-sans/wght.css";
 import "@fontsource/newsreader/latin-400.css";
+import "@fontsource/ibm-plex-mono/latin-400.css";
+import "@fontsource/ibm-plex-mono/latin-500.css";
+import "@fontsource/ibm-plex-mono/latin-600.css";
 import "./index.css";
 
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";

@@ -1,79 +1,134 @@
 @import "tailwindcss";
 
 /*
- * A logbook, not a dashboard.
+ * CHART RECORDER — a personal life-recording instrument.
  *
- * The consistency grid is the artifact this product is built around; everything
- * else is quiet scaffolding. Two voices: a sans for the machine's record, a
- * serif for the user's own prose (journal, reflections, the date heading).
+ * Time is an axis, habits are channels on it, a day's state is INK laid on
+ * PRE-RULED PAPER, notes are annotations, schedule changes are cuts through the
+ * record. Three consequences run through every file:
  *
- * Semantic colours are raw custom properties so a theme can swap them, and
- * @theme inline makes Tailwind's utilities reference the var rather than bake
- * the value in. Add a colour here, never a hex in a component.
+ *   1. There is ONE surface: the canvas. No card, no panel, no elevation.
+ *      Separation is done by ruled lines and by empty space.
+ *   2. Every horizontal line is a measurement. A line's treatment — solid,
+ *      pecked, broken, dimmed, thickened — carries state, so the lines that
+ *      carry state are held to the 3:1 non-text floor. `grid` is the one
+ *      decorative rule in the system and it encodes nothing.
+ *   3. Hue identifies the HABIT and never the verdict.
+ *
+ * Add a colour here, never a hex in a component.
  */
 
 @theme inline {
   --color-canvas: var(--c-canvas);
-  --color-surface: var(--c-surface);
   --color-raised: var(--c-raised);
-  --color-line: var(--c-line);
-  --color-line-strong: var(--c-line-strong);
   --color-ink: var(--c-ink);
   --color-muted: var(--c-muted);
   --color-faint: var(--c-faint);
   --color-warn: var(--c-warn);
 
-  /* The API's five theme tokens. Applied as var(--color-{color_token}), so
-     there is no token-to-class map and nothing to keep in sync. */
+  /*
+   * The two rules, and the whole reason they are separate tokens.
+   *
+   * `baseline` CARRIES STATE — a pecked baseline means the habit is paused, a
+   * broken one means the day was not logged — so it is held to 3:1 against the
+   * canvas (WCAG 1.4.11). `grid` is the drum's decorative ruling and the
+   * writing field's lines; it is ~1.3:1 and that is allowed only because it
+   * encodes nothing. Drawing a state-bearing line in `grid` would fail the
+   * floor silently, which is exactly why the old `line` / `line-strong` pair
+   * was renamed: those names said which was darker, not which meant something.
+   */
+  --color-grid: var(--c-grid);
+  --color-baseline: var(--c-baseline);
+  /*
+   * The printed paper of the drum: the ruling under a weekday channel, drawn
+   * only across the days a habit was actually alive for. It is a LINE, not a
+   * fill — that change is what makes the sheet read as chart paper rather than
+   * as a block of coloured squares — but it keeps the 3:1 it was given when it
+   * was a fill, because "this day existed and nothing was asked of you" is a
+   * state and has to be perceptible.
+   */
+  --color-tray: var(--c-tray);
+
+  /* The API's five theme tokens. Applied as var(--c-{color_token}), so there is
+     no token-to-class map and nothing to keep in sync. */
   --color-chart-1: var(--c-chart-1);
   --color-chart-2: var(--c-chart-2);
   --color-chart-3: var(--c-chart-3);
   --color-chart-4: var(--c-chart-4);
   --color-chart-5: var(--c-chart-5);
 
+  /*
+   * Three voices, no overlap.
+   *
+   *   REGISTER (mono)  every number the instrument reports
+   *   LABEL/UI (sans)  everything the machine says about itself
+   *   PROSE (serif)    everything a person wrote — habit names included
+   */
   --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --font-serif: Newsreader, Georgia, "Times New Roman", serif;
 
-  --text-micro: 0.6875rem; /* 11 - legend, cell labels */
-  --text-micro--line-height: 1rem;
-  --text-meta: 0.8125rem; /* 13 - secondary lines */
+  /*
+   * 9 to 128 — a 14x range, deliberately gapped. Nothing lives between 22 and
+   * 42, or between 46 and 76. The gaps are the point: an instrument panel is
+   * tiny engraved labels against one large readout, and a scale with even steps
+   * cannot produce that.
+   */
+  --text-tick: 0.5625rem; /* 9  - axis tick labels, sheet flags */
+  --text-tick--line-height: 0.75rem;
+  --text-label: 0.625rem; /* 10 - LABEL: everything the machine says about itself */
+  --text-label--line-height: 0.875rem;
+  --text-meta: 0.8125rem; /* 13 - REGISTER inline, secondary lines */
   --text-meta--line-height: 1.125rem;
-  --text-base: 0.9375rem; /* 15 - interface default */
-  --text-base--line-height: 1.4rem;
+  --text-ui: 0.9375rem; /* 15 - interface default */
+  --text-ui--line-height: 1.375rem;
   --text-field: 1rem; /* 16 - every input, or iOS zooms on focus */
   --text-field--line-height: 1.5rem;
-  --text-row: 1.125rem; /* 18 - a habit's name */
-  --text-row--line-height: 1.5rem;
-  --text-section: 1.375rem; /* 22 - section heads */
-  --text-section--line-height: 1.75rem;
-  --text-date: 2rem; /* 32 - the date, in the serif */
-  --text-date--line-height: 2.25rem;
-  --text-figure: 2.75rem; /* 44 - the one big number */
-  --text-figure--line-height: 3rem;
+  --text-read: 1.0625rem; /* 17 - PROSE: notes and reflections */
+  --text-read--line-height: 1.75rem;
+  --text-name: 1.1875rem; /* 19 - a habit's name, in the serif */
+  --text-name--line-height: 1.5rem;
+  --text-reg: 1.375rem; /* 22 - a secondary figure */
+  --text-reg--line-height: 1.5rem;
+  --text-pct: 2.625rem; /* 42 - the one rate on a review row */
+  --text-pct--line-height: 2.25rem;
+  --text-title: 2.375rem; /* 38 - a screen's name, in the serif */
+  --text-title--line-height: 2.5rem;
+  --text-fig: 4.75rem; /* 76 - THE figure: the day of the month */
+  --text-fig--line-height: 3.8rem;
 }
 
 /*
- * Dark-first: dark is the default and stays dark unless a theme is chosen.
- * A light system preference does not flip it, because "dark-first" is a
- * product decision rather than a guess at the room's lighting.
+ * Dark-first: dark is the default and stays dark unless a theme is chosen. A
+ * light system preference does not flip it, because "dark-first" is a product
+ * decision rather than a guess at the room's lighting.
  *
- * Habit colours are separated in hue but never carry state — the grid's states
- * are told by fill and shape, and a habit's name is always adjacent to its
- * colour. That is what keeps the five legible to a colour-blind reader. Red is
- * deliberately absent from the five so --c-warn cannot be mistaken for a habit.
+ * Every value below was MEASURED against its own canvas, by rendering the real
+ * cells and reading the real computed colours back — not estimated. An earlier
+ * pass guessed, and put --c-tray at 2.14:1 dark / 1.88:1 light while this
+ * comment claimed 3.4 / 3.3. Dark / light, and the first three must not drift:
+ *
+ *   --c-tray      3.30 / 3.12  the printed ruling. "This day existed."
+ *   --c-baseline  5.47 / 4.77  state-bearing rules and mark strokes.
+ *   --c-warn      5.66 / 5.59  the one state hue, and never the only signal.
+ *   --c-grid      1.31 / 1.21  decorative ONLY, which is why it may sit here.
+ *
+ * Red is deliberately absent from the five habit hues so --c-warn can never be
+ * mistaken for a habit.
  */
 :root {
   color-scheme: dark;
 
-  --c-canvas: #15151b;
-  --c-surface: #1d1d26;
-  --c-raised: #26262f;
-  --c-line: #2c2c38; /* row dividers: decoration, no contrast floor */
-  --c-line-strong: #66667a; /* 3.2:1 — control borders carry meaning (WCAG 1.4.11) */
-  --c-ink: #ecedf2;
-  --c-muted: #9c9cab; /* 6.5:1 on canvas */
-  --c-faint: #56566a; /* decoration only, never text */
+  --c-canvas: #131319;
+  --c-raised: #212129;
+  --c-ink: #edeef3;
+  --c-muted: #9c9cab; /* 7.0:1 on canvas */
+  --c-faint: #5a5a6e; /* decoration only, never text */
   --c-warn: #d3717c;
+
+  --c-grid: #2a2a35; /* 1.3:1 — decorative ruling, encodes nothing */
+  --c-baseline: #8a8a9e; /* 5.2:1 — carries state */
+  --c-tray: #66667a; /* 3.2:1 — the printed paper, and a state of its own */
 
   --c-chart-1: #7ea8e8;
   --c-chart-2: #5fbfa8;
@@ -85,15 +140,16 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --c-canvas: #fbfbfd;
-  --c-surface: #ffffff;
+  --c-canvas: #fcfcfd;
   --c-raised: #f1f1f5;
-  --c-line: #e3e3ea;
-  --c-line-strong: #8d8da0; /* 3.3:1, as above */
-  --c-ink: #1a1a22;
+  --c-ink: #17171f;
   --c-muted: #5e5e70;
   --c-faint: #a8a8b8;
   --c-warn: #b03f4e;
+
+  --c-grid: #e6e6ee; /* 1.2:1 — decorative */
+  --c-baseline: #6f6f86; /* 5.0:1 */
+  --c-tray: #8e8ea4; /* 3.2:1 */
 
   --c-chart-1: #3d6fb8;
   --c-chart-2: #1f8c74;
@@ -114,27 +170,29 @@
     background: var(--c-canvas);
     color: var(--c-ink);
     font-family: var(--font-sans);
-    font-size: var(--text-base);
-    line-height: var(--text-base--line-height);
+    font-size: var(--text-ui);
+    line-height: var(--text-ui--line-height);
     /* A tap highlight fires before we know whether it was a tap or a scroll.
        Every interactive surface defines its own :active state instead. */
     -webkit-tap-highlight-color: transparent;
   }
 
   /* Numbers that change in place — streaks, counts, percentages — must not
-     reflow the line around them. */
+     reflow the line around them. The mono face is already tabular; this covers
+     the figures that are set in the sans. */
   :where(time, output, .tabular) {
     font-variant-numeric: tabular-nums;
   }
 
+  /* Radius 0 to match a system in which nothing is a rounded container. */
   :focus-visible {
     outline: 2px solid var(--c-ink);
     outline-offset: 2px;
-    border-radius: 2px;
+    border-radius: 0;
   }
 
   ::selection {
-    background: var(--c-line-strong);
+    background: var(--c-baseline);
     color: var(--c-ink);
   }
 
@@ -145,8 +203,80 @@
   }
 
   dialog::backdrop {
-    background: rgb(0 0 0 / 0.5);
+    background: rgb(0 0 0 / 0.55);
   }
+}
+
+/*
+ * LABEL — everything the machine says about itself.
+ *
+ * A utility rather than four classes repeated in every file, because the
+ * tracking and the casing are the voice: a LABEL that is not uppercase and not
+ * tracked is just small text, and the moment one exists the system has two
+ * voices doing one job.
+ */
+@utility label {
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  line-height: var(--text-label--line-height);
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+@utility label-tick {
+  font-family: var(--font-sans);
+  font-size: var(--text-tick);
+  line-height: var(--text-tick--line-height);
+  font-weight: 600;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+}
+
+/*
+ * PECKED — a paused span, in the two weights the two tiers need.
+ *
+ * Utilities rather than arbitrary values in a className, because the pitch is
+ * load-bearing: fine enough to read as a texture rather than a row of separate
+ * marks, coarse enough that a 1px line survives on a near-white ground. It is
+ * the only thing separating "paused" from "nothing was asked" on the sheet, so
+ * it is measured, not decorative, and it belongs next to the tokens it uses.
+ */
+@utility peck-paper {
+  background-image: repeating-linear-gradient(to right, var(--c-tray) 0 2px, transparent 2px 4px);
+}
+
+@utility peck-rule {
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--c-baseline) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+/*
+ * The writing field: ruled paper with a printed margin.
+ *
+ * The gradient repeats at exactly the line-height and the top padding is a
+ * whole number of half-lines, so prose sits ON its rules and stays there as the
+ * field is resized. Change `line-height` here and the two numbers below have to
+ * move with it — that is the whole maintenance cost of the effect.
+ */
+@utility ruled {
+  font-family: var(--font-serif);
+  font-size: var(--text-read);
+  line-height: 1.75rem; /* 28px — the ruling pitch */
+  padding: 0.3125rem 0 0 1rem;
+  border: 0;
+  border-left: 1px solid var(--c-tray);
+  background-color: transparent;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0 27px,
+    var(--c-grid) 27px 28px
+  );
+  background-position: 0 5px;
+  outline: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -161,12 +291,12 @@
 }
 
 /*
- * The one card in the product.
+ * The one card in the product, and it is a dialog rather than a card.
  *
  * A native <dialog> already does focus trapping, Escape, inertness and the
  * backdrop, which is the entire reason no dialog library is installed here.
  * Presentation is the only part left: a bottom sheet within thumb reach on a
- * phone, a centred panel on a wider screen.
+ * phone, a centred panel on a wider screen. Square, like everything else.
  */
 .sheet {
   position: fixed;
@@ -177,9 +307,9 @@
   max-width: 100%;
   max-height: 88dvh;
   border: 0;
-  border-top: 1px solid var(--c-line);
-  border-radius: 18px 18px 0 0;
-  background: var(--c-surface);
+  border-top: 1px solid var(--c-baseline);
+  border-radius: 0;
+  background: var(--c-canvas);
   color: var(--c-ink);
   overflow: auto;
   overscroll-behavior: contain;
@@ -213,10 +343,9 @@
     width: min(29rem, calc(100% - 2rem));
     height: max-content;
     max-height: 84dvh;
-    border: 1px solid var(--c-line);
-    border-radius: 14px;
+    border: 1px solid var(--c-baseline);
     translate: 0 0;
-    scale: 0.98;
+    scale: 0.985;
     transition:
       opacity 140ms ease,
       scale 140ms ease,
@@ -231,8 +360,31 @@
   @starting-style {
     .sheet[open] {
       opacity: 0;
-      scale: 0.98;
+      scale: 0.985;
     }
+  }
+}
+
+/*
+ * The one motion in the product, and it is mechanical.
+ *
+ * A mark SEATS onto its rule — one damped overshoot, 140ms — the way a pen
+ * touches paper. Nothing loops, nothing idles, nothing sweeps and nothing
+ * counts up: an instrument that performs is a toy. It fires on state change
+ * only, and the reduced-motion block above already flattens it to nothing.
+ */
+@keyframes seat {
+  0% {
+    transform: translateY(-5px);
+    opacity: 0.4;
+  }
+  60% {
+    transform: translateY(1.5px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
   }
 }
 

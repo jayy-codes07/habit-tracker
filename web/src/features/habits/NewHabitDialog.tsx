@@ -5,7 +5,7 @@ import { FIELD, PRIMARY, QUIET } from "../../components/form";
 import { ColorPicker } from "./ColorPicker";
 import { leastUsedColor } from "./colors";
 import { SchedulePicker } from "./SchedulePicker";
-import { EVERY_DAY, isDraftValid, toScheduleInput, type ScheduleDraft } from "./schedule";
+import { draftFor, EVERY_DAY, isDraftValid, toScheduleInput, type ScheduleDraft } from "./schedule";
 import { useCreateHabit } from "./queries";
 import type { ColorToken } from "../../types";
 
@@ -26,7 +26,12 @@ export function NewHabitDialog({
 }) {
   const [name, setName] = useState("");
   const [chosen, setChosen] = useState<ColorToken | null>(null);
-  const [draft, setDraft] = useState<ScheduleDraft>({ kind: "fixed", days: EVERY_DAY });
+  const [unit, setUnit] = useState("");
+  const [draft, setDraft] = useState<ScheduleDraft>({
+    kind: "fixed",
+    days: EVERY_DAY,
+    amount: null,
+  });
   const create = useCreateHabit();
 
   /*
@@ -43,18 +48,37 @@ export function NewHabitDialog({
     create.reset();
     setName("");
     setChosen(null);
-    setDraft({ kind: "fixed", days: EVERY_DAY });
+    setUnit("");
+    setDraft({ kind: "fixed", days: EVERY_DAY, amount: null });
     onClose();
   };
 
+  // Blank means binary. Held apart from the raw box so the rule is stated once.
+  const measuredIn = unit.trim() === "" ? null : unit.trim();
+  /*
+   * The schedule as it will actually be sent. Typing a unit, setting a target
+   * and then deleting the unit again used to leave the amount behind in the
+   * draft, and the server answered a target with no unit by committing a habit
+   * with no schedule version at all. It refuses that now; this stops the
+   * request being made in the first place.
+   */
+  const saving = draftFor(draft, measuredIn);
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!name.trim() || !isDraftValid(draft)) return;
+    if (!name.trim() || !isDraftValid(saving)) return;
     // start_date is left to the server, which defaults it to today. Back-dating
     // a habit fills its grid with days it was never logged on, so a habit you
     // are only starting now would open on a wall of failures.
     create.mutate(
-      { name: name.trim(), color_token: color, schedule: toScheduleInput(draft) },
+      {
+        name: name.trim(),
+        color_token: color,
+        // A blank box is a binary habit, which is most of them. Sending "" would
+        // be a unit that names nothing, and the server refuses one.
+        ...(measuredIn === null ? {} : { unit: measuredIn }),
+        schedule: toScheduleInput(saving),
+      },
       { onSuccess: close },
     );
   };
@@ -63,7 +87,7 @@ export function NewHabitDialog({
     <Dialog open={open} onClose={close} title="New habit">
       <form onSubmit={submit} className="grid gap-5">
         <div>
-          <label htmlFor="habit-name" className="text-meta text-muted block pb-1.5">
+          <label htmlFor="habit-name" className="label text-muted block pb-2.5">
             Name
           </label>
           <input
@@ -79,7 +103,31 @@ export function NewHabitDialog({
 
         <ColorPicker value={color} onChange={setChosen} />
 
-        <SchedulePicker draft={draft} onChange={setDraft} />
+        <div>
+          <label htmlFor="habit-unit" className="label text-muted block pb-2.5">
+            Measured in (optional)
+          </label>
+          <input
+            id="habit-unit"
+            value={unit}
+            onChange={(event) => setUnit(event.target.value)}
+            maxLength={20}
+            placeholder="km, pages, glasses…"
+            aria-describedby="habit-unit-hint"
+            className={FIELD}
+          />
+          <p id="habit-unit-hint" className="text-meta text-muted mt-1.5">
+            Leave blank to just tick the day off. You can add this later, but not change it once
+            days have been measured.
+          </p>
+        </div>
+
+        {/*
+         * The target lives in the picker and only appears once there is a unit
+         * to count in — so typing one here reveals it, which is the order the
+         * two are actually decided in.
+         */}
+        <SchedulePicker draft={saving} unit={measuredIn} onChange={setDraft} />
 
         {create.isError && (
           <p role="alert" className="text-warn text-meta">
@@ -91,7 +139,7 @@ export function NewHabitDialog({
           <button
             type="submit"
             className={PRIMARY}
-            disabled={!name.trim() || !isDraftValid(draft) || create.isPending}
+            disabled={!name.trim() || !isDraftValid(saving) || create.isPending}
           >
             {create.isPending ? "Adding…" : "Add habit"}
           </button>
