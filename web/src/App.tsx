@@ -183,7 +183,12 @@ function Spine() {
         "md:inset-y-0 md:right-auto md:left-0 md:w-[4.875rem] md:border-t-0 md:border-r md:pb-0 md:pt-[env(safe-area-inset-top)]"
       }
     >
-      <div className="flex md:mt-6 md:flex-col md:items-stretch">
+      {/* Seven labels across a 375px phone leave about two pixels between
+          "PATTERN" and "REVIEW", which reads as one word. The gap is the fix;
+          the engraved tick size is what pays for it, and it is the system's
+          own second voice for exactly this — a tighter spot — not a new one.
+          The rail has room, so both revert at md. */}
+      <div className="flex gap-x-2 px-2 md:mt-6 md:flex-col md:items-stretch md:gap-x-0 md:px-0">
         {SCREENS.map((screen) => (
           <Position key={screen.to} to={screen.to} active={screen.to === active}>
             {screen.label}
@@ -199,7 +204,7 @@ function Position({ to, active, children }: { to: string; active: boolean; child
     <Link
       to={to}
       aria-current={active ? "page" : undefined}
-      className={`label relative flex min-h-[2.875rem] flex-1 items-center justify-center transition-colors md:h-[2.625rem] md:flex-none md:justify-start md:pr-3.5 md:pl-2.5 ${
+      className={`label-tick md:label relative flex min-h-[2.875rem] flex-1 items-center justify-center transition-colors md:h-[2.625rem] md:flex-none md:justify-start md:pr-3.5 md:pl-2.5 ${
         active ? "text-ink" : "text-muted hover:text-ink"
       }`}
     >
