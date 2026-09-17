@@ -11,10 +11,16 @@ import { login, logout, session } from "./auth.controller.js";
  * Brute force is the only realistic attack on a one-password app, so this is the
  * highest-value control here. Successful logins are not counted, so a correct
  * password after a few typos still works.
+ *
+ * A ONE-MINUTE window, not fifteen. Five attempts a minute is still three
+ * orders of magnitude short of guessing anything, and the cost of the long
+ * window fell entirely on the one person who owns the password and mistyped it:
+ * a quarter of an hour locked out of your own habits is a punishment, a minute
+ * is a pause.
  */
 function loginRateLimiter() {
   return rateLimit({
-    windowMs: 15 * 60 * 1000,
+    windowMs: 60 * 1000,
     limit: 5,
     standardHeaders: "draft-7",
     legacyHeaders: false,

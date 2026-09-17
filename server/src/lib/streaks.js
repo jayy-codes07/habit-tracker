@@ -239,7 +239,21 @@ export function currentStreak(habit, today) {
 // Longest streak
 // ---------------------------------------------------------------------------
 
-/** The best run the habit ever had, in the same unit as currentStreak. */
+/**
+ * The best run the habit ever had, in the same unit as currentStreak.
+ *
+ * NOTHING IN THE APP CALLS THIS, and that is not an oversight to be tidied away
+ * by the next dead-code sweep. It was on the review payload until it was clear
+ * no screen would ever be allowed to read it — the product states what happened
+ * and does not frame a history as records to beat — so computing it per habit on
+ * every review load was work with no possible consumer.
+ *
+ * The function stays because it is correct, exhaustively unit-tested, and the
+ * only thing here that would be genuinely hard to write again: it scores every
+ * week of a habit's life under whichever schedule kind governed it. If a use
+ * ever appears that is not a scoreboard — an export, a diagnostic — it is ready.
+ * Do not wire it back into a payload.
+ */
 export function longestStreak(habit, today) {
   return effectiveKind(habit, today) === "weekly"
     ? longestWeekly(habit, today)

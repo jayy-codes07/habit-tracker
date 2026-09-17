@@ -28,13 +28,7 @@ import {
   VERDICT,
   VERDICT_CHAR,
 } from "../../lib/scheduling.js";
-import {
-  consistency,
-  currentStreak,
-  effectiveKind,
-  longestStreak,
-  scoreWeek,
-} from "../../lib/streaks.js";
+import { consistency, currentStreak, effectiveKind, scoreWeek } from "../../lib/streaks.js";
 import * as habitsService from "../habits/habits.service.js";
 import * as journalService from "../journal/journal.service.js";
 import * as leetcodeService from "../leetcode/leetcode.service.js";
@@ -366,7 +360,6 @@ export async function buildReview(month) {
         attainment: measured.rate,
         attainment_of: measured.sessions,
         current_streak: currentStreak(view, today),
-        longest_streak: longestStreak(view, today),
       };
     }),
     tasks,

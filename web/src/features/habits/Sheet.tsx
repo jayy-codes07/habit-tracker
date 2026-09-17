@@ -45,6 +45,15 @@ import { CELL, paint, paperOf, VERDICT_LABEL, type Paper } from "./verdict";
 
 /** The weekday axis. One letter, because 26 weeks on a phone leaves 18px. */
 const AXIS = 18;
+
+/**
+ * Half the pen arrowhead, plus a hair of air, and the per-character width of
+ * `label-tick`. The same 5.5 the caller uses to decide whether two labels can
+ * sit side by side — measuring text properly would mean a layout pass per cut
+ * to move a label that is dropped either way.
+ */
+const PEN_HALF = 7;
+const LABEL_EM = 5.5;
 const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6];
 
 /** A schedule version drawn as a cut through the record. */
@@ -225,16 +234,32 @@ export function Sheet({
           {cuts.map((cut) => {
             const week = weekOf(cut.date, start, weeks);
             if (week === null) return null;
+            /*
+             * The pen shares this line with the cut labels, and it wins.
+             *
+             * The caller already drops a label that would collide with the
+             * PREVIOUS label, but it cannot know where the pen is — that is
+             * resolved here, from today. A label running under the pen's
+             * arrowhead rendered as "▲AILY": the most identifying mark on the
+             * sheet, defaced by text that the stream below states by date
+             * anyway. Losing the label costs nothing; losing the pen costs the
+             * drawing its subject.
+             */
+            const labelLeft = colX(week) - half + 4;
+            const clearOfPen =
+              penX === null ||
+              labelLeft > penX + PEN_HALF ||
+              labelLeft + (cut.label?.length ?? 0) * LABEL_EM < penX - PEN_HALF;
             return (
               <Fragment key={cut.date}>
                 <span
                   className="absolute top-[-4px] bottom-0 border-l border-dashed"
                   style={{ left: colX(week) - half, borderColor: "var(--c-ink)", opacity: 0.7 }}
                 />
-                {cut.label && (
+                {cut.label && clearOfPen && (
                   <span
                     className="label-tick text-ink absolute whitespace-nowrap"
-                    style={{ left: colX(week) - half + 4, top: -34 }}
+                    style={{ left: labelLeft, top: -34 }}
                   >
                     {cut.label}
                   </span>

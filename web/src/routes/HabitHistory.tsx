@@ -370,8 +370,16 @@ function Jump({
         </div>
       )}
 
-      <label htmlFor="jump-date" className="label text-muted mt-4 block">
-        Or a date
+      {/* "Or a date" only reads as a sentence when there is a first option to
+          be an alternative to. A habit younger than a calendar year offers no
+          year chips at all — which is every habit in a new install — and the
+          heading above was then followed by "or a date" with nothing before
+          it. */}
+      <label
+        htmlFor="jump-date"
+        className={`label text-muted block ${years.length > 1 ? "mt-4" : "mt-2"}`}
+      >
+        {years.length > 1 ? "Or a date" : "A date"}
       </label>
       <input
         id="jump-date"

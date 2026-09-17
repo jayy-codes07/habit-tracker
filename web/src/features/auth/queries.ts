@@ -28,6 +28,8 @@ export const useSession = () =>
 export function useLogin() {
   const client = useQueryClient();
   return useMutation({
+    // main.tsx's global 401 handler skips this key; see the note there.
+    mutationKey: ["auth"],
     mutationFn: api.login,
     onSuccess: () => client.resetQueries(),
   });
@@ -36,6 +38,7 @@ export function useLogin() {
 export function useLogout() {
   const client = useQueryClient();
   return useMutation({
+    mutationKey: ["auth"],
     mutationFn: api.logout,
     onSettled: () => client.resetQueries(),
   });

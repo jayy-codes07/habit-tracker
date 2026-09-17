@@ -18,14 +18,19 @@
  * The streak figure is bounded by the window the server loaded, so what it is
  * called changes with the month; see streakLabel().
  *
- * `longest_streak` is on the payload and is deliberately not rendered — here or
- * anywhere. The product states what happened; it does not keep records. A
- * "best" is a high score in a game with one player, and once a screen carries
- * one, deciding to rest costs something — in an app whose whole scoring model
- * exists to make rest cost nothing. Counts, states and rates are facts about a
- * month and all stay: done, missed, skipped, not logged, paused, consistency,
- * attainment, and the current streak, which says where you are rather than
- * ranking you against where you have been.
+ * There is no maximum on this payload and there is not meant to be. The product
+ * states what happened; it does not keep records. A "best" is a high score in a
+ * game with one player, and once a screen carries one, deciding to rest costs
+ * something — in an app whose whole scoring model exists to make rest cost
+ * nothing. Counts, states and rates are facts about a month and all stay: done,
+ * missed, skipped, not logged, paused, consistency, attainment, and the current
+ * streak, which says where you are rather than ranking you against where you
+ * have been.
+ *
+ * `longest_streak` used to ride along here, computed per habit on every load and
+ * read by nothing. It was removed rather than left as a field the interface is
+ * forbidden to use — the comment justifying it claimed the export needed it,
+ * and the export is raw rows only and never carried it.
  */
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";

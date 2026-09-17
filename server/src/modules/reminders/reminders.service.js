@@ -17,7 +17,7 @@
  * arithmetic.
  */
 import { query } from "../../db/index.js";
-import { addDays, nowTime, today } from "../../lib/dates.js";
+import { addDays, nowTime, startOfWeek, today } from "../../lib/dates.js";
 import { isGone, pushConfigured, sendPush } from "../../lib/push.js";
 import { isScheduledOn, resolveSchedule } from "../../lib/scheduling.js";
 import * as habitsService from "../habits/habits.service.js";
@@ -128,7 +128,13 @@ export function inQuietHours(now, start, end) {
  *     one of them), so it is eligible on any day its week is still open, which
  *     is the same reading isActionable() gives the day screen;
  *   - already logged today — done, missed or skipped, the day has been decided
- *     and a reminder would be asking about something already answered.
+ *     and a reminder would be asking about something already answered;
+ *   - a weekly week already MET — the weekly analogue of a completed task. Three
+ *     of three done by Wednesday asks nothing of Thursday, and reminding anyway
+ *     produced four more notifications about a commitment already kept, which is
+ *     precisely how this feature turns into one that gets switched off. Counted
+ *     in the same statement rather than a second round trip, and only to `date`:
+ *     the week so far is what the reminder is about.
  *
  * A schedule version dated in the future is respected for free: resolveSchedule
  * takes the version in force on the date asked for, so a habit that becomes
@@ -136,7 +142,12 @@ export function inQuietHours(now, start, end) {
  */
 async function dueHabits(date, now) {
   const { rows } = await query(
-    `SELECT h.id, h.name, h.start_date
+    `SELECT h.id, h.name, h.start_date,
+            (SELECT count(*)
+               FROM habit_logs w
+              WHERE w.habit_id = h.id
+                AND w.status = 'done'
+                AND w.date BETWEEN $3 AND $2)::int AS week_done
        FROM habits h
       WHERE h.archived_at IS NULL
         AND h.reminder_at IS NOT NULL
@@ -145,7 +156,7 @@ async function dueHabits(date, now) {
           SELECT 1 FROM habit_logs l WHERE l.habit_id = h.id AND l.date = $2
         )
       ORDER BY h.sort_order, h.id`,
-    [now, date],
+    [now, date, startOfWeek(date)],
   );
   if (rows.length === 0) return [];
 
@@ -155,7 +166,8 @@ async function dueHabits(date, now) {
     .filter((habit) => {
       const schedule = resolveSchedule(versions.get(habit.id) ?? [], habit.start_date, date);
       if (!schedule || schedule.schedule_kind === "paused") return false;
-      return schedule.schedule_kind === "weekly" || isScheduledOn(schedule, date);
+      if (schedule.schedule_kind === "weekly") return habit.week_done < schedule.weekly_target;
+      return isScheduledOn(schedule, date);
     })
     .map((habit) => ({
       key: `habit:${habit.id}`,

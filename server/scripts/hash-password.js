@@ -60,8 +60,8 @@ const [first = "", second = ""] = interactive ? await readInteractive() : await 
 const password = first.trim();
 const confirmation = second.trim();
 
-if (password.length < 12) {
-  fail("Refusing: use at least 12 characters. This is the only credential.");
+if (password.length < 8) {
+  fail("Refusing: use at least 8 characters. This is the only credential.");
 }
 if (confirmation !== password) {
   fail("Refusing: the two entries did not match.");

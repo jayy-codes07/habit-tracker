@@ -478,7 +478,6 @@ describe("GET /api/review/:month", () => {
 
       assert.equal(summary.done, 31);
       assert.equal(summary.current_streak, 31, "a finished month must not report zero");
-      assert.equal(summary.longest_streak, 31);
     });
   });
 
@@ -913,7 +912,6 @@ describe("quantity on /api/review/:month", () => {
 
       assert.equal(a.consistency, b.consistency);
       assert.equal(a.current_streak, b.current_streak);
-      assert.equal(a.longest_streak, b.longest_streak);
 
       // ...while attainment sees exactly what the streaks cannot.
       assert.ok(Math.abs(a.attainment - 0.2) < 1e-9, `attainment was ${a.attainment}`);

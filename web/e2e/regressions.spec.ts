@@ -779,11 +779,14 @@ test("the review names the streak for the month it is showing", async ({ page })
 /**
  * The product states what happened; it does not keep records.
  *
- * `longest_streak` is on the review payload and is rendered nowhere — the same
- * standing as `done_of`. A best is a high score in a game with one player, and
- * the moment a screen carries one, deciding to rest costs something, in an app
- * whose entire scoring model exists to make rest cost nothing. The counts, the
- * rates and the CURRENT streak are facts about a month and all stay.
+ * No payload carries a maximum any more — `longest_streak` was removed from the
+ * review response once it was clear nothing could ever be allowed to read it.
+ * This test outlives it on purpose: it guards the RULE, not that one field, so
+ * it still fails if a best week, a record or a personal high is reintroduced by
+ * any route. A best is a high score in a game with one player, and the moment a
+ * screen carries one, deciding to rest costs something, in an app whose entire
+ * scoring model exists to make rest cost nothing. The counts, the rates and the
+ * CURRENT streak are facts about a month and all stay.
  */
 test("no screen reports a personal best", async ({ page }) => {
   await signIn(page);
@@ -1938,4 +1941,35 @@ test("approach notes save on blur and do not follow you to the next problem", as
   } finally {
     await sweepProblems(page);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Signing in
+// ---------------------------------------------------------------------------
+
+/**
+ * A wrong password answered 401, main.tsx's global handler read that as an
+ * expired session and invalidated ["session"], the session query went back to
+ * pending, and App swapped Login for <Boot />. The mutation state lives in
+ * Login, so its "Invalid password" was unmounted before it was ever painted —
+ * the form simply sat there. The same silence then hid the rate limiter's
+ * countdown, which is how a *correct* password came to look like a dead button
+ * too.
+ *
+ * ponytail: one failed attempt, not five, so the test cannot lock the limiter
+ * out for the rest of the suite (five per minute, successes not counted). The
+ * lock-out message itself has no test; re-running this file five times inside
+ * the window is what it would cost.
+ */
+test("a wrong password says so, and the next right one still gets you in", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Password").fill("not-the-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  await expect(page.getByRole("status")).toHaveText("Invalid password");
+  await expect(signedIn(page)).toBeHidden();
+
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(signedIn(page)).toBeVisible();
 });

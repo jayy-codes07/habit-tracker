@@ -395,20 +395,6 @@ export interface ReviewHabit {
   attainment: number | null;
   attainment_of: number;
   current_streak: number;
-  /**
-   * TRAP: on the payload, and never rendered — the same standing as `done_of`
-   * above, for a different reason.
-   *
-   * The product may state what happened; it may not frame a history as records
-   * to beat. A "best" is a high score in a game with one player, and a screen
-   * carrying one makes resting cost something in an app whose scoring model
-   * exists to make rest free. Counts, states and rates are facts and all stay;
-   * a maximum is not one of them.
-   *
-   * It is still reported because the server computes it honestly and the export
-   * is the user's data. Nothing in the interface reads it.
-   */
-  longest_streak: number;
 }
 
 /** leetcode_problems.difficulty — LeetCode's own three, and nothing else. */

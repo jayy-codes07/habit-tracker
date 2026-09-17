@@ -31,6 +31,25 @@ build
 # Not needed at runtime
 server/tests
 coverage
+
+# Development data, and the one script in the tree that truncates every table.
+# Nothing the server imports reaches it — `npm run db:seed` is a development
+# command, and the development container bind-mounts server/ over /app, so it
+# keeps working there. Shipping it meant the production image carried a
+# one-command wipe of real data for no reason.
+server/src/db/seeds
 **/eslint.config.js
 **/.prettierrc.json
 **/.prettierignore
+
+# Not needed to BUILD the SPA either. The web-build stage does `COPY web/ ./`,
+# so without these an edit to an e2e spec invalidated that layer and paid for a
+# full `vite build` — and `npm run build` is `vite build` alone, which neither
+# lints nor typechecks, so none of it is reachable from the build.
+web/e2e
+web/playwright.config.ts
+web/scripts
+web/test-results
+web/playwright-report
+web/blob-report
+**/*.tsbuildinfo

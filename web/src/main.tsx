@@ -38,8 +38,18 @@ const client: QueryClient = new QueryClient({
     },
   }),
   mutationCache: new MutationCache({
-    onError: (error) => {
-      if (is401(error)) void client.invalidateQueries({ queryKey: ["session"] });
+    onError: (error, _variables, _context, mutation) => {
+      // Skipped for ["auth"], and that is not cosmetic. A 401 from POST /login
+      // IS the answer to the attempt, not an expired session — and invalidating
+      // ["session"] over it flips the session query back to pending, so App
+      // renders <Boot /> and unmounts Login. The mutation state lives in that
+      // component, so the "Invalid password" it was about to show is destroyed
+      // before a frame of it is painted: a wrong password looked like a dead
+      // button, and so did a right one once the rate limiter had started
+      // answering 429.
+      if (is401(error) && mutation.options.mutationKey?.[0] !== "auth") {
+        void client.invalidateQueries({ queryKey: ["session"] });
+      }
     },
   }),
   defaultOptions: {

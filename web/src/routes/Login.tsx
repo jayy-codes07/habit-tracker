@@ -5,7 +5,7 @@ import { ApiError } from "../lib/api-client";
 import { useLogin } from "../features/auth/queries";
 
 /**
- * The login rate limiter allows five attempts per fifteen minutes, and this is
+ * The login rate limiter allows five attempts per minute, and this is
  * a one-password app with no reset — so the lock-out is rendered as a plain
  * countdown rather than another "invalid password". Being locked out with no
  * explanation is the difference between a pause and a dead app.

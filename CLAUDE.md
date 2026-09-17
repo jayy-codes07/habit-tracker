@@ -576,9 +576,12 @@ Four payload traps, all handled in
 
 **The product states what happened; it does not keep records.** Counts, states and rates are facts
 and all belong on screen — done, missed, skipped, not logged, paused days, consistency, attainment,
-and the *current* streak, which says where you are. A **maximum** is not one of them: `longest_streak`
-is on the review payload and is rendered nowhere, the habit history page reports no best month and
-no personal record, and none should be added. A best is a high score in a game with one player, and
+and the *current* streak, which says where you are. A **maximum** is not one of them: no payload
+carries one, the habit history page reports no best month and no personal record, and none should be
+added. `longest_streak` was on the review payload and rendered nowhere until it was removed — a
+field the interface is forbidden to read is work done per habit on every load for no consumer.
+`longestStreak()` survives in `lib/streaks.js`, unit-tested and deliberately uncalled; the note on
+it says not to wire it back. A best is a high score in a game with one player, and
 the moment a screen carries one, deciding to rest costs something — in an app whose entire scoring
 model (skipped days leave the denominator, paused days never enter it, a pause passes through a
 streak) exists to make rest cost nothing.

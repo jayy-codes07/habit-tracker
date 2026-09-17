@@ -1,6 +1,6 @@
 /**
  * The line icons the screens share. Inline SVG rather than an icon package:
- * five paths are smaller than a dependency, and they inherit currentColor.
+ * three paths are smaller than a dependency, and they inherit currentColor.
  */
 const stroke = {
   fill: "none",
@@ -13,18 +13,6 @@ const stroke = {
 export const Check = () => (
   <svg viewBox="0 0 12 12" className="h-3.5 w-3.5" {...stroke} strokeWidth={2.2} aria-hidden="true">
     <path d="M2.2 6.2 4.8 8.8 9.8 3.2" />
-  </svg>
-);
-
-export const Cross = () => (
-  <svg viewBox="0 0 12 12" className="h-3 w-3" {...stroke} aria-hidden="true">
-    <path d="M3.4 3.4 8.6 8.6M8.6 3.4 3.4 8.6" />
-  </svg>
-);
-
-export const Dash = () => (
-  <svg viewBox="0 0 12 12" className="h-3 w-3" {...stroke} aria-hidden="true">
-    <path d="M3 6h6" />
   </svg>
 );
 

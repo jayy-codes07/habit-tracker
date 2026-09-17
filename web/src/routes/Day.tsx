@@ -795,8 +795,14 @@ export default function Day() {
   const relative = today ? relativeDay(date, today) : null;
 
   /* Derived from the date on screen and nothing else — no new payload field.
-     An instrument says where in the run you are. */
-  const dayOfYear = daysBetween(`${date.slice(0, 4)}-01-01`, date) + 1;
+     An instrument says where in the run you are.
+
+     Both figures come from daysBetween rather than a `% 4` leap test, which is
+     wrong for 1900 and 2100. Same length, and it cannot drift from the date
+     arithmetic the rest of the screen uses. */
+  const year = date.slice(0, 4);
+  const dayOfYear = daysBetween(`${year}-01-01`, date) + 1;
+  const daysInYear = daysBetween(`${year}-01-01`, `${Number(year) + 1}-01-01`);
 
   /*
    * ONE instance, placed by the grid — never a second copy behind an `lg:hidden`.
@@ -833,7 +839,7 @@ export default function Day() {
         </span>
       </h1>
       <p className="label text-muted mt-4 flex flex-wrap gap-x-5 gap-y-1">
-        <Pair k="day" v={`${dayOfYear} / ${Number(date.slice(0, 4)) % 4 === 0 ? 366 : 365}`} />
+        <Pair k="day" v={`${dayOfYear} / ${daysInYear}`} />
         {relative && <span>{relative}</span>}
         {!relative && <span>{readOnly ? "Coming up" : "Looking back"}</span>}
       </p>

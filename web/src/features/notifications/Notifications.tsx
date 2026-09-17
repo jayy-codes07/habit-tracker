@@ -343,10 +343,12 @@ export function Notifications() {
         )}
 
         {/*
-         * The limitation, said plainly and not in a footnote. There is no push
-         * service behind this, so nothing arrives with the app closed; a
-         * reminder you have not seen yet is delivered when you next open it.
-         * Promising more than that is worse than reminding you of less.
+         * What delivery actually promises, said plainly and not in a footnote:
+         * the server sends each reminder once at its time, and the browser's own
+         * push service carries it whether or not the app is open. The two limits
+         * worth stating are the ones a person would otherwise discover by being
+         * surprised — a device that is offline or a browser the system has
+         * stopped receives nothing, and nothing is queued to arrive later.
          */}
         <p className="text-meta text-muted">
           Reminders are sent by the server and arrive even with the app closed, as long as this

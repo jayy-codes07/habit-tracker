@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 
 import { query } from "../src/db/index.js";
-import { addDays, nowTime, today } from "../src/lib/dates.js";
+import { addDays, nowTime, startOfWeek, today } from "../src/lib/dates.js";
 import { dueNow, inQuietHours } from "../src/modules/reminders/reminders.service.js";
 import { withApi, json } from "./helpers/api.js";
 import {
@@ -245,6 +245,44 @@ describe("what is due", () => {
         effective_from: addDays(today(), -7),
         schedule_kind: "weekly",
       });
+      await enable(api);
+      assert.deepEqual(keys(await due()), [`habit:${habit.id}`]);
+    }));
+
+  /**
+   * A day of the current week that is not today, whichever weekday the suite
+   * runs on. The two cases below need a done day the "already decided today"
+   * filter cannot account for, or they would pass for the wrong reason.
+   */
+  const otherDayThisWeek = () => {
+    const monday = startOfWeek(today());
+    return [0, 1, 2, 3, 4, 5, 6]
+      .map((offset) => addDays(monday, offset))
+      .find((date) => date !== today());
+  };
+
+  /** A weekly habit reminded at a time gone by, with one done day this week. */
+  async function weeklyHabitWithOneDone(target) {
+    const habit = await remindedHabit({ schedule: false });
+    await makeSchedule(habit.id, {
+      effective_from: addDays(today(), -14),
+      schedule_kind: "weekly",
+      weekly_target: target,
+    });
+    await makeLog(habit.id, { date: otherDayThisWeek(), status: "done" });
+    return habit;
+  }
+
+  it("says nothing about a weekly habit whose week is already met", () =>
+    withApi(async ({ api }) => {
+      await weeklyHabitWithOneDone(1);
+      await enable(api);
+      assert.deepEqual(await due(), []);
+    }));
+
+  it("still reminds about a weekly habit whose week is short of target", () =>
+    withApi(async ({ api }) => {
+      const habit = await weeklyHabitWithOneDone(2);
       await enable(api);
       assert.deepEqual(keys(await due()), [`habit:${habit.id}`]);
     }));

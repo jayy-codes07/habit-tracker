@@ -192,13 +192,24 @@ export default function Leetcode() {
   const waiting = activeRows.filter(needsReview).length;
   const vocabulary = useMemo(() => topicVocabulary(activeRows), [activeRows]);
 
+  /*
+   * The view's own rows, before the search box and the level select narrow them.
+   * Kept separate so the empty state can tell the two cases apart: an empty
+   * review queue is good news and says so, while "nothing matches that" is about
+   * the filters — and saying the second when the first is true told someone with
+   * ten problems and nothing to review that their search had failed.
+   */
+  const inView = useMemo(
+    () => rows.filter((problem) => view !== "review" || needsReview(problem)),
+    [rows, view],
+  );
+
   const shown = useMemo(
     () =>
-      rows
-        .filter((problem) => view !== "review" || needsReview(problem))
+      inView
         .filter((problem) => difficulty === "" || problem.difficulty === difficulty)
         .filter((problem) => matches(problem, search)),
-    [rows, view, difficulty, search],
+    [inView, difficulty, search],
   );
 
   /** Clicking a tag is the topic filter — through the field that already exists. */
@@ -315,7 +326,7 @@ export default function Leetcode() {
                 <IndexSkeleton />
               ) : shown.length === 0 ? (
                 <p className="text-muted text-meta py-4">
-                  {rows.length === 0
+                  {inView.length === 0
                     ? view === "archived"
                       ? "Nothing archived."
                       : view === "review"
