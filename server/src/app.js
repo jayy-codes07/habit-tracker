@@ -73,3 +73,22 @@ function mountSpa(app) {
   // Client-side routing: any non-API path returns the shell.
   app.get(/.*/, (_req, res) => res.sendFile(indexHtml));
 }
+
+/*
+ * Vercel's Express preset picks this file up by name (app.js / index.js /
+ * server.js, at the root or under src/) and requires a default export that is a
+ * function or an http.Server. createApp() alone is a named factory, which is
+ * what "Invalid export found in module" was complaining about.
+ *
+ * It is a lazy wrapper rather than `export default createApp()` because this
+ * module is imported by every test and by server.js: building the app at import
+ * time would run assertAuthConfig() and mountSpa()'s existsSync on every one of
+ * them. Built on the first request instead, then reused for the life of the
+ * warm function. An Express app is itself an (req, res) function, so handing it
+ * the platform's pair is the whole of the adapter.
+ */
+let vercelApp;
+export default function handler(req, res) {
+  vercelApp ??= createApp();
+  return vercelApp(req, res);
+}
